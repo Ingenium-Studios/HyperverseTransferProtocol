@@ -492,7 +492,7 @@ P1 deliberately uses a closed wire shape:
 - messages MUST be valid UTF-8 JSON objects;
 - duplicate object keys MUST be rejected as `invalid_message`;
 - for a known P1 message type, fields not specified by this profile are rejected as `invalid_message`;
-- required fields shown by the normative examples MUST be present unless the surrounding text explicitly marks them optional;
+- fields shown by a normative message example are required for that message unless its subsection explicitly marks them conditional or optional;
 - P1 participant `kind` is either `human` or `agent`;
 - client-generated message/entity IDs are non-empty opaque strings no longer than 128 UTF-8 bytes;
 - realm IDs, participant IDs, subscription IDs, snapshot IDs, and host publication IDs are opaque to clients;
@@ -829,6 +829,10 @@ A subscriber for whom the new entity is visible receives:
 
 P1 uses RFC 7396 JSON Merge Patch against the component's `state` object.
 
+For `hvtp.transform@1`, a patch may contain only `position`, `rotation`, and/or `scale`. For `hvtp.material@1`, a patch may contain only `baseColor`. The patch MUST contain at least one field.
+
+The host applies the patch to the current state and then validates the **complete resulting component state**. A Merge Patch deletion such as `{"position": null}` therefore fails with `invalid_component_state` because it would remove a required transform field.
+
 `component.set` has the same metadata fields but replaces `patch` with a complete `state`. For example:
 
 ```json
@@ -1057,6 +1061,8 @@ Allowed reasons are `subscription`, `interest`, and `authorization`.
 
 The host sends this acknowledgement directly to the requester even if the resulting entity is outside the requester's effective view.
 
+For every committed world mutation, `ack.body.ref`, `status`, and `seq` are required. `entityId` is required for entity/component mutations. `component`, `revision`, and `authorityEpoch` are required for component mutations and omitted for entity-level create/delete acknowledgements.
+
 ### 14.17 Terminal error
 
 ```json
@@ -1077,6 +1083,8 @@ The host sends this acknowledgement directly to the requester even if the result
   }
 }
 ```
+
+For `error`, `body.ref`, `body.code`, and `body.message` are required. Context fields such as `entityId`, `component`, `currentRevision`, and `authorityEpoch` are code-specific and MAY be omitted when not applicable. Top-level `realm` / `realmEpoch` are omitted when the error occurs before a realm/epoch has been established.
 
 P1 error codes MUST include:
 
