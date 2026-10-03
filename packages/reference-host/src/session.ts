@@ -11,6 +11,7 @@ import {
   type ErrorMessage,
   type P1ErrorCode,
   type P1PresenceEntity,
+  type P1SharedEntity,
   type ParticipantKind,
   type RealmJoinedMessage,
   type RealmSnapshotBeginMessage,
@@ -27,6 +28,17 @@ export interface SessionDispatch {
   readonly afterEnqueue?: () => void;
 }
 
+export interface P1WorldView {
+  snapshot(selector: SubscriptionSelector): {
+    readonly baseSeq: number;
+    readonly entities: readonly P1SharedEntity[];
+  };
+}
+
+const EMPTY_WORLD_VIEW: P1WorldView = {
+  snapshot: () => ({ baseSeq: 0, entities: [] }),
+};
+
 const KNOWN_CLIENT_MESSAGE_TYPES = new Set([
   "session.hello",
   "realm.join",
@@ -42,16 +54,22 @@ export class P1Session {
   #state: SessionState = "CONNECTED";
   readonly #assetBaseUri: string;
   readonly #realmEpoch: string;
+  readonly #worldView: P1WorldView;
   #participantId: string | null = null;
   #participantKind: ParticipantKind | null = null;
   #activeSubscriptionId: string | null = null;
   #pendingSnapshotId: string | null = null;
 
-  constructor(assetBaseUri: string, realmEpoch = `epoch:${randomUUID()}`) {
+  constructor(
+    assetBaseUri: string,
+    realmEpoch = `epoch:${randomUUID()}`,
+    worldView: P1WorldView = EMPTY_WORLD_VIEW,
+  ) {
     const uri = new URL(assetBaseUri);
     if (!uri.pathname.endsWith("/")) throw new Error("assetBaseUri must end in /");
     this.#assetBaseUri = uri.toString();
     this.#realmEpoch = realmEpoch;
+    this.#worldView = worldView;
   }
 
   get state(): SessionState {
@@ -139,11 +157,22 @@ export class P1Session {
       return this.#dispatch(this.#error("invalid_state", join.value.id, "Session has no negotiated participant."));
     }
 
+    const effectiveSubscription = cloneSubscription(join.value.body.subscription);
+    const durableSnapshot = this.#worldView.snapshot(effectiveSubscription);
+    if (durableSnapshot.entities.length + 1 > P1_LIMITS.maxVisibleEntitiesPerConnection) {
+      return this.#dispatch(
+        this.#error(
+          "resource_limit",
+          join.value.id,
+          "Initial effective view exceeds maxVisibleEntitiesPerConnection.",
+        ),
+      );
+    }
+
     const subscriptionId = `subscription:${randomUUID()}`;
     const snapshotId = `snapshot:${randomUUID()}`;
     const presenceEntityId = `entity:presence-${randomUUID()}`;
-    const snapshotBaseSeq = 0;
-    const effectiveSubscription = cloneSubscription(join.value.body.subscription);
+    const snapshotBaseSeq = durableSnapshot.baseSeq;
     const presenceEntity = createPresenceEntity(presenceEntityId, participantId, participantKind);
 
     const joined: RealmJoinedMessage = {
@@ -172,7 +201,16 @@ export class P1Session {
       body: { snapshotId, subscriptionId, snapshotBaseSeq },
     };
 
-    const entity: EntitySnapshotMessage = {
+    const sharedEntities: EntitySnapshotMessage[] = durableSnapshot.entities.map((entity) => ({
+      hvtp: HVTP_VERSION,
+      id: `snapshot-entity:${randomUUID()}`,
+      type: "entity.snapshot",
+      realm: P1_REALM_ID,
+      realmEpoch: this.#realmEpoch,
+      body: { snapshotId, snapshotBaseSeq, entity },
+    }));
+
+    const presenceSnapshot: EntitySnapshotMessage = {
       hvtp: HVTP_VERSION,
       id: `snapshot-entity:${randomUUID()}`,
       type: "entity.snapshot",
@@ -187,7 +225,12 @@ export class P1Session {
       type: "realm.snapshot.end",
       realm: P1_REALM_ID,
       realmEpoch: this.#realmEpoch,
-      body: { snapshotId, subscriptionId, snapshotBaseSeq, entityCount: 1 },
+      body: {
+        snapshotId,
+        subscriptionId,
+        snapshotBaseSeq,
+        entityCount: sharedEntities.length + 1,
+      },
     };
 
     this.#activeSubscriptionId = subscriptionId;
@@ -195,7 +238,7 @@ export class P1Session {
     this.#state = "JOINING";
 
     return {
-      messages: [joined, begin, entity, end],
+      messages: [joined, begin, ...sharedEntities, presenceSnapshot, end],
       afterEnqueue: () => {
         if (this.#state === "JOINING" && this.#pendingSnapshotId === snapshotId) {
           this.#pendingSnapshotId = null;
