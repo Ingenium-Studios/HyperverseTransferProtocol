@@ -38,10 +38,10 @@ P1 fixes:
 
 - **reference language:** TypeScript;
 - **transport:** WebSocket;
-- **encoding:** UTF-8 JSON text frames;
+- **encoding:** UTF-8 JSON WebSocket messages;
 - **rendering:** Three.js for the first visual reference client;
 - **3D asset format:** glTF 2.0;
-- **asset transport:** same-origin HTTP(S);
+- **asset transport:** HTTP(S) from an explicit host-advertised asset base URI;
 - **persistence:** implementation-defined, with SQLite recommended;
 - **topology:** one authoritative host for one realm;
 - **canonical authority:** the host for every P1 component;
@@ -73,6 +73,14 @@ P1 uses the HVTP 0.2 transform convention:
 - quaternions MUST be finite and normalized within an implementation tolerance of `1e-5`;
 - P1 scale components MUST be finite, greater than zero, and no greater than `1000`;
 - P1 position components MUST be finite and in the inclusive range `[-1_000_000, 1_000_000]` metres.
+
+Transform composition is normative:
+
+```text
+realmPoint = translation + Rotation(quaternion) × (scale ⊙ assetPoint)
+```
+
+For column-vector matrices this is `T × R × S`. Scale is applied in local asset axes before the active right-handed quaternion rotation; translation is applied last. If a renderable selects a glTF node, the glTF node hierarchy is evaluated first and the HVTP entity transform wraps the resulting asset-space point.
 
 `hvtp.material@1.baseColor` is linear-light RGBA. All four values MUST be finite and in `[0, 1]`.
 
@@ -113,7 +121,7 @@ For a headless participant, "support" for `hvtp.renderable@1` and `hvtp.material
 
 P1 has no durable user-authentication system. `participantId` values are session-scoped and issued by the host.
 
-A client-supplied `principal` in `session.hello` is informational only in P1 and MUST NOT grant permissions.
+P1 does not accept a client `principal` field. Durable principals remain an HVTP core concept for later authenticated profiles.
 
 ### 5.1 Read policy
 
@@ -252,6 +260,9 @@ Rules:
 - `entity.create`, `entity.delete`, `component.set`, `component.patch`, and `subscription.set` are valid only in `JOINED`;
 - canonical subscriber publications and view enter/leave messages are not delivered during `JOINING`; they are buffered according to §9;
 - a client request received in the wrong state returns `invalid_state`;
+- a rejected `session.hello` leaves the connection in `CONNECTED`;
+- a rejected `realm.join` leaves the connection in `NEGOTIATED`;
+- a rejected joined-state request leaves the connection in `JOINED`, unless the host closes the connection under an explicit resource/protocol-error rule;
 - P1 has no separate `realm.leave` message; leaving is performed by closing the WebSocket. A later profile may add multi-realm or leave/rejoin semantics without changing P1.
 
 
@@ -267,6 +278,8 @@ urn:hvtp:realm:prototype-world
 
 P1 uses `seq` as a **realm mutation watermark**.
 
+`seq` is a nonnegative integer in `[0, 2^53-1]`. `revision` and `authorityEpoch` are positive integers in `[1, 2^53-1]`.
+
 - Every accepted persistent world mutation increments the realm sequence exactly once.
 - The resulting canonical subscriber messages reference that sequence.
 - A single mutation may result in different subscriber-specific messages sharing the same `seq`.
@@ -278,9 +291,9 @@ P1 uses `seq` as a **realm mutation watermark**.
 
 ### 7.1 Host restart
 
-P1 issues a new `realmEpoch` on every host process start.
+P1 issues a new `realmEpoch` on every host process start and resets the new epoch's realm `seq` to 0.
 
-Persistent entity/component state and revisions survive restart, but session participants, presence entities, request-deduplication state, subscriptions, and the previous realm sequencing domain do not.
+Persistent entity/component state, revisions, authority epochs, and tombstones survive restart, but session participants, presence entities, request-deduplication state, subscriptions, and the previous realm sequencing domain do not.
 
 A reconnecting client MUST negotiate a new session and take a fresh snapshot.
 
@@ -288,12 +301,16 @@ A reconnecting client MUST negotiate a new session and take a fresh snapshot.
 
 ## 8. Persistence and commit boundary
 
+For a durable component mutation, the request `authorityEpoch` MUST equal the current authority epoch and `baseRevision` MUST equal the current component revision exactly. Any mismatch is rejected before mutation.
+
+New P1 components begin at `revision: 1` and `authorityEpoch: 1`. Every accepted component set/patch advances that component revision by exactly one and advances realm `seq` by exactly one, even if the validated resulting state is byte-for-byte/structurally equal to the previous state. A retry of an already-admitted logical request does not advance either value again.
+
 For a durable mutation, the P1 host MUST:
 
-1. validate syntax, authorization, authority epoch, and base revision;
+1. validate syntax, authorization, exact authority epoch/revision equality where applicable, and resource limits;
 2. compute the canonical new state;
-3. durably commit the entity/component state, component revision, deletion/tombstone state where applicable, and realm mutation sequence in one persistence transaction or equivalent atomic unit;
-4. only after that durable commit, send terminal `ack` and canonical subscriber publications.
+3. durably commit the entity/component state, component revision, deletion/tombstone state where applicable, and the mutation's realm sequence assignment in one persistence transaction or equivalent atomic unit;
+4. only after that durable commit, send terminal result and canonical subscriber publications.
 
 An `ack` with `status: "committed"` means the operation passed the P1 durability boundary.
 
@@ -326,12 +343,31 @@ If the connection fails before `realm.snapshot.end`, the partial snapshot MUST b
 
 ## 10. Interest management and view lifecycle
 
-P1 supports:
+P1 uses one reusable subscription selector shape:
 
-- one optional spatial-radius selector;
-- zero or more explicit entity IDs.
+```text
+SubscriptionSelector {
+    spatial?: {
+        center: [x, y, z],
+        radius: number
+    },
+    entities?: string[]
+}
+```
+
+Both fields are optional. An omitted `entities` is equivalent to an empty list. An omitted `spatial` means no spatial selection.
 
 Selectors combine by **union** after read authorization.
+
+Spatial selection is defined solely from structured transform state:
+
+```text
+selectedSpatially(E) =
+    squaredEuclideanDistance(E.hvtp.transform.position, spatial.center)
+    <= spatial.radius²
+```
+
+The test is three-dimensional and boundary-inclusive. `center` MUST contain exactly three finite coordinates within the P1 position domain. `radius` MUST be finite and in `[0, maxSubscriptionRadiusMeters]`; radius 0 is valid. Spatial membership is independent of asset geometry/bounds, entity scale, `renderable.visible`, and whether the client has loaded the asset.
 
 - If both selectors are omitted/empty, the effective subscribed view is empty.
 - Explicitly named entities remain selected regardless of distance, subject to read authorization.
@@ -340,30 +376,38 @@ Selectors combine by **union** after read authorization.
 
 P1 does not require occlusion, portals, semantic queries, region routing, or adaptive LOD.
 
-### 10.1 Subscription replacement
+### 10.1 Subscription replacement and per-connection output ordering
 
 `subscription.set` replaces the previous interest declaration; it is not additive.
 
-The host:
+Each connection has one serialized logical outbound stream. The host MUST serialize subscription replacements per connection and MUST NOT interleave one replacement batch with another replacement batch or with later live subscriber publications.
 
-1. captures a boundary `baseRealmSeq`;
-2. computes the new authorized effective view at that boundary;
-3. buffers post-boundary subscriber-relevant changes;
-4. sends `subscription.applied` with a new `subscriptionId`, the effective selectors, and `baseRealmSeq`;
-5. sends `view.entity.leave` for entities in the old view but not the new view;
-6. sends `view.entity.enter` with complete current entity state for entities in the new view but not the old view;
-7. flushes buffered post-boundary changes.
+For one replacement, the host:
 
-The enter/leave messages created by the replacement MAY reference `baseRealmSeq`; they do not create new realm mutations.
+1. finishes enqueueing any already-determined subscriber publications up to boundary `baseRealmSeq`;
+2. captures `baseRealmSeq` and computes the new authorized effective view at that boundary;
+3. buffers subscriber-relevant post-boundary changes;
+4. sends `subscription.applied` with a new monotonically increasing connection-local `subscriptionId`, the effective selectors, and `baseRealmSeq`;
+5. sends all required `view.entity.leave` records for entities in the old view but not the new view;
+6. sends all required `view.entity.enter` records with complete current state for entities in the new view but not the old view;
+7. only after the transition batch is complete, flushes buffered post-boundary changes and resumes ordinary live output.
 
-### 10.2 Membership changes caused by world mutation
+The transition batch is noninterleaved. All subscriber-scoped messages after `subscription.applied` carry the active `subscriptionId`. A client MUST ignore a later-arriving subscriber-scoped message whose `subscriptionId` is older than the active subscription generation.
 
-For a canonical mutation at realm sequence N:
+The enter/leave messages created by the replacement MAY reference `baseRealmSeq`; they do not create new realm mutations. Equal `seq` values do not imply duplicate messages and MUST NOT be used as a message-deduplication key.
 
-- entity visible before and after → send the normal canonical change such as `component.updated`;
-- invisible before, visible after → send `view.entity.enter` with complete post-mutation entity state and `seq: N`;
-- visible before, invisible after → send `view.entity.leave` with `seq: N`;
+Returning a cached `subscription.applied` for a retried request MUST NOT replay historical `view.entity.enter`, `view.entity.leave`, or canonical world publications.
+
+### 10.2 Membership changes caused by updates to an existing entity
+
+For a canonical component mutation of an already-existing, nondeleted entity at realm sequence N:
+
+- entity visible before and after → send exactly one normal canonical change such as `component.updated`;
+- invisible before, visible after → send exactly one `view.entity.enter` with complete post-mutation entity state and `seq: N`;
+- visible before, invisible after → send exactly one `view.entity.leave` with `seq: N`;
 - invisible before and after → send nothing.
+
+A creation or global deletion does **not** use this matrix. If a newly created entity is visible, send `entity.created` and do not also send `view.entity.enter`. If a globally deleted entity was visible, send `entity.deleted` and do not also send `view.entity.leave`.
 
 A client receiving `view.entity.leave` MUST remove the entity from its local view without creating a global tombstone.
 
@@ -371,9 +415,9 @@ A client receiving `view.entity.enter` MUST be able to materialize the entity us
 
 ### 10.3 Global deletion
 
-A globally deleted entity that was visible to a subscriber produces `entity.deleted`.
+A globally deleted entity that was visible to a subscriber produces exactly one `entity.deleted`.
 
-`entity.deleted` is semantically different from `view.entity.leave`.
+`entity.deleted` is semantically different from `view.entity.leave`. Deleting an already absent or tombstoned entity returns `entity_not_found` and does not advance realm `seq`.
 
 ---
 
@@ -381,19 +425,28 @@ A globally deleted entity that was visible to a subscriber produces `entity.dele
 
 Every client request ID MUST be collision-resistant.
 
-Within a session, the host MUST reserve a mutating request ID when processing begins and cache its terminal result when processing ends, subject to the advertised `maxRequestDedupEntries` bound. Pending reservations and cached terminal results both count toward this bound.
+P1 applies request-ID admission/deduplication to the state-changing client requests `entity.create`, `entity.delete`, `component.set`, `component.patch`, and `subscription.set`.
 
-The host MUST NOT execute two operations concurrently for the same request ID and MUST NOT evict a cached result and later re-execute that ID within the session.
+For each such request, processing order is:
 
-If the deduplication table is full, new mutating requests MUST be rejected with `resource_limit` rather than growing memory without bound or silently dropping older records.
+1. validate that a unique request ID is available;
+2. look up that ID in the session request table;
+3. if it already exists, apply the duplicate rules below before any capacity check;
+4. for a new ID, if the table is full, reject with `resource_limit` **without reserving/caching that ID**;
+5. otherwise reserve the ID and begin exactly one logical operation;
+6. cache the operation's terminal result when it completes.
+
+Pending reservations and cached terminal results both count toward `maxRequestDedupEntries`. The host MUST NOT evict a cached result and later re-execute that ID within the session.
+
+If a new ID is refused because the table is full, that refusal is outside the dedup guarantee; if capacity later becomes available, the same ID may be admitted as a new logical request.
 
 If the same session repeats:
 
-- the same request ID with structurally equal parsed JSON request content (object-key ordering ignored, array ordering significant) while the original is pending → attach the retry to the same in-flight logical operation and return the same eventual terminal result;
-- the same request ID with structurally equal parsed JSON request content after completion → return the previously cached terminal result and MUST NOT execute the mutation again;
+- the same request ID with structurally equal parsed JSON request content (object-key ordering ignored, array ordering significant) while the original is pending → treat it as the same logical operation; do not allocate an unbounded waiter per retransmission and return the same eventual terminal result;
+- the same request ID with structurally equal parsed JSON request content after completion → return the cached terminal result and MUST NOT execute the operation again;
 - the same request ID with different parsed request content, whether pending or complete → reject with `request_id_conflict`.
 
-Every accepted/rejected mutating request receives `ack` or `error` directly, regardless of the requester's active subscription.
+Durable world mutations terminate with `ack` or `error` directly, regardless of the requester's active subscription. A successful `subscription.set` terminates with `subscription.applied`; its cached retry response MUST NOT replay its historical transition batch.
 
 The requester MUST NOT rely on subscriber publications to learn its own operation result.
 
