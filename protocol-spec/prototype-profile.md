@@ -589,7 +589,7 @@ Input validation is layered:
 
 - A WebSocket **text message** whose complete reassembled payload is not valid UTF-8 MUST fail the WebSocket connection. P1 uses close code 1007 for this condition. No application-level HVTP error is required. UTF-8 code points MAY be split across WebSocket fragments; validity is evaluated on the reassembled text-message byte stream, not per fragment.
 - Valid UTF-8 whose payload is not syntactically valid JSON MAY receive an uncorrelated `error` with `body.ref: null` and `code: "invalid_json"`; the host MAY then continue or close according to policy.
-- Syntactically valid JSON that is not a valid P1 request object — including `null`, arrays, scalar JSON values, invalid/missing IDs, or decoded duplicate IDs — uses `code: "invalid_message"` with `body.ref: null`.
+- Syntactically valid JSON with an invalid P1 request shape uses `code: "invalid_message"`. If exactly one valid top-level request `id` is available, `body.ref` MUST contain that ID; otherwise `body.ref` is JSON `null`. This covers non-object JSON, invalid/missing IDs, decoded duplicate IDs, unknown fields, and other closed-shape violations without discarding a usable correlation ID.
 - A valid request envelope whose component/message content violates a component rule uses the correlated protocol/component error defined by that validation path.
 
 Oversized complete WebSocket messages MAY be closed without an application-level response.
