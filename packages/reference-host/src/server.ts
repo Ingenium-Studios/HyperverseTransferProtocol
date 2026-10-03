@@ -6,12 +6,14 @@ import { dirname, resolve } from "node:path";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import { P1_LIMITS } from "@hvtp/protocol-types";
 import { P1Session } from "./session.js";
+import { P1WorldStore } from "./world-store.js";
 
 export interface ReferenceHostOptions {
   readonly host?: string;
   readonly port?: number;
   readonly publicOrigin?: string;
   readonly fixturePath?: string;
+  readonly databasePath?: string;
 }
 
 export interface ReferenceHost {
@@ -20,6 +22,7 @@ export interface ReferenceHost {
   readonly host: string;
   readonly port: number;
   readonly realmEpoch: string;
+  readonly worldStore: P1WorldStore;
   close(): Promise<void>;
 }
 
@@ -28,6 +31,11 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
   const requestedPort = options.port ?? 0;
   const defaultFixture = resolve(dirname(fileURLToPath(import.meta.url)), "../../../protocol-spec/fixtures/unit-cube.gltf");
   const fixturePath = options.fixturePath ?? defaultFixture;
+  const databasePath =
+    options.databasePath ??
+    process.env.HVTP_DB_PATH ??
+    resolve(process.cwd(), "data", "p1.sqlite");
+  const worldStore = new P1WorldStore(databasePath);
 
   const server = createServer((req, res) => {
     if (req.method === "GET" && req.url === "/assets/p1/unit-cube.gltf") {
@@ -65,7 +73,9 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
   const assetBaseUri = new URL("/assets/p1/", origin).toString();
   const realmEpoch = `epoch:${randomUUID()}`;
 
-  wsServer.on("connection", (socket) => bindSocket(socket, new P1Session(assetBaseUri, realmEpoch)));
+  wsServer.on("connection", (socket) =>
+    bindSocket(socket, new P1Session(assetBaseUri, realmEpoch, worldStore)),
+  );
 
   return {
     server,
@@ -73,10 +83,12 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
     host,
     port,
     realmEpoch,
+    worldStore,
     async close(): Promise<void> {
       for (const client of wsServer.clients) client.close(1001, "host shutdown");
       await new Promise<void>((resolveClose) => wsServer.close(() => resolveClose()));
       await new Promise<void>((resolveClose, reject) => server.close((error) => (error ? reject(error) : resolveClose())));
+      worldStore.close();
     },
   };
 }
@@ -107,7 +119,15 @@ function bindSocket(socket: WebSocket, session: P1Session): void {
       return;
     }
 
-    const dispatch = session.handleText(text);
+    let dispatch;
+    try {
+      dispatch = session.handleText(text);
+    } catch {
+      session.close();
+      socket.close(1011, "P1 world-state failure");
+      return;
+    }
+
     try {
       for (const message of dispatch.messages) socket.send(JSON.stringify(message));
       dispatch.afterEnqueue?.();
