@@ -1,0 +1,21 @@
+{
+  "name": "hvtp-reference",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build --workspace @hvtp/protocol-types && npm run build --workspace @hvtp/reference-host",
+    "test": "npm run test --workspace @hvtp/protocol-types && npm run test --workspace @hvtp/reference-host",
+    "check": "npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}
