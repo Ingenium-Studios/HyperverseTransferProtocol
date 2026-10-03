@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream, statSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,7 @@ export interface ReferenceHost {
   readonly wsServer: WebSocketServer;
   readonly host: string;
   readonly port: number;
+  readonly realmEpoch: string;
   close(): Promise<void>;
 }
 
@@ -61,14 +63,16 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
   const port = address.port;
   const origin = options.publicOrigin ?? `http://${host}:${port}`;
   const assetBaseUri = new URL("/assets/p1/", origin).toString();
+  const realmEpoch = `epoch:${randomUUID()}`;
 
-  wsServer.on("connection", (socket) => bindSocket(socket, new P1Session(assetBaseUri)));
+  wsServer.on("connection", (socket) => bindSocket(socket, new P1Session(assetBaseUri, realmEpoch)));
 
   return {
     server,
     wsServer,
     host,
     port,
+    realmEpoch,
     async close(): Promise<void> {
       for (const client of wsServer.clients) client.close(1001, "host shutdown");
       await new Promise<void>((resolveClose) => wsServer.close(() => resolveClose()));
@@ -103,7 +107,14 @@ function bindSocket(socket: WebSocket, session: P1Session): void {
       return;
     }
 
-    socket.send(JSON.stringify(session.handleText(text)));
+    const dispatch = session.handleText(text);
+    try {
+      for (const message of dispatch.messages) socket.send(JSON.stringify(message));
+      dispatch.afterEnqueue?.();
+    } catch {
+      session.close();
+      socket.close(1011, "failed to enqueue P1 response");
+    }
   });
 
   socket.on("close", () => session.close());
