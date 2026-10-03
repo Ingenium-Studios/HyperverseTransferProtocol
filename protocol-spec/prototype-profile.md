@@ -280,6 +280,8 @@ P1 uses `seq` as a **realm mutation watermark**.
 
 `seq` is a nonnegative integer in `[0, 2^53-1]`. `revision` and `authorityEpoch` are positive integers in `[1, 2^53-1]`.
 
+If accepting a mutation would require incrementing `seq` or a component revision beyond `2^53-1`, the host MUST reject that mutation with `resource_limit` before changing canonical state. P1 authority epochs remain 1 because authority transfer is deferred.
+
 - Every accepted persistent world mutation increments the realm sequence exactly once.
 - The resulting canonical subscriber messages reference that sequence.
 - A single mutation may result in different subscriber-specific messages sharing the same `seq`.
@@ -495,7 +497,7 @@ All client requests count toward `maxClientRequestsPerSecond`; durable world mut
 
 If a realm join or subscription replacement would produce an effective view larger than `maxVisibleEntitiesPerConnection`, the host MUST reject it with `resource_limit` before changing the active view. If later valid world mutations would grow an existing effective view beyond that cap, the host MUST send `resource_limit` when safe and close that affected connection rather than silently omit selected entities. The client may reconnect with a narrower subscription.
 
-Live entities plus durable tombstones count toward `maxPersistentEntityRecords`. Once that host-wide budget is full, new `entity.create` requests MUST be rejected with `resource_limit` until administrative cleanup or a later garbage-collection policy frees capacity.
+Live entities plus durable tombstones count toward `maxPersistentEntityRecords`. P1 defines no tombstone garbage collection or entity-ID reuse. Once that host-wide budget is full, new `entity.create` requests MUST be rejected with `resource_limit` for the lifetime of that prototype realm store.
 
 Exceeded limits return `resource_limit` when a response remains safe to send. If the outbound queue/message condition itself prevents a safe response, the host MAY close the connection.
 
@@ -575,6 +577,7 @@ P1 deliberately uses a closed wire shape:
 - JSON numbers used for transforms/materials/subscriptions/revision metadata MUST satisfy their P1 numeric domains;
 - `realm.join.body.subscription` is required and uses the `SubscriptionSelector` shape from §10; both `spatial` and `entities` are optional;
 - `subscription.set.body` uses that same selector shape directly;
+- `realm.joined.body.effectiveSubscription` and `subscription.applied.body.effectiveSubscription` use that same selector shape;
 - an empty selector object `{}` is valid and requests no subscribed world entities beyond the participant's own presence.
 
 If bytes cannot be parsed as one valid UTF-8 JSON request object, the host MAY send an uncorrelated `error` with `body.ref: null` and `code: "invalid_json"`, then continue or close according to the error/resource condition. If JSON parses but no unique valid request `id` exists (including decoded duplicate IDs), use `code: "invalid_message"` with `body.ref: null`. Oversized messages and unrecoverable UTF-8/JSON framing errors MAY be closed without a response.
