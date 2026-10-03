@@ -387,16 +387,16 @@ For one replacement, the host:
 1. finishes enqueueing any already-determined subscriber publications up to boundary `baseRealmSeq`;
 2. captures `baseRealmSeq` and computes the new authorized effective view at that boundary;
 3. buffers subscriber-relevant post-boundary changes;
-4. sends `subscription.applied` with a new monotonically increasing connection-local `subscriptionId`, the effective selectors, and `baseRealmSeq`;
+4. sends `subscription.applied` with a new unique connection-local `subscriptionId`, the effective selectors, and `baseRealmSeq`;
 5. sends all required `view.entity.leave` records for entities in the old view but not the new view;
 6. sends all required `view.entity.enter` records with complete current state for entities in the new view but not the old view;
 7. only after the transition batch is complete, flushes buffered post-boundary changes and resumes ordinary live output.
 
-The transition batch is noninterleaved. All subscriber-scoped messages after `subscription.applied` carry the active `subscriptionId`. A client MUST ignore a later-arriving subscriber-scoped message whose `subscriptionId` is older than the active subscription generation.
+The transition batch is noninterleaved. All subscriber-scoped messages after `subscription.applied` carry the active `subscriptionId`. A client MUST process subscriber-scoped state only when its `subscriptionId` equals the client's currently active subscription ID; a message carrying any other subscription ID is stale for that view and is ignored.
 
 The enter/leave messages created by the replacement MAY reference `baseRealmSeq`; they do not create new realm mutations. Equal `seq` values do not imply duplicate messages and MUST NOT be used as a message-deduplication key.
 
-Returning a cached `subscription.applied` for a retried request MUST NOT replay historical `view.entity.enter`, `view.entity.leave`, or canonical world publications.
+Returning a cached `subscription.applied` for a retried request MUST NOT replay historical `view.entity.enter`, `view.entity.leave`, or canonical world publications. Client-side, a `subscription.applied` transition activates its `subscriptionId` only when its `previousSubscriptionId` equals the client's currently active subscription ID. A cached response for an older already-superseded transition is terminal request information only and MUST NOT reactivate that old view.
 
 ### 10.2 Membership changes caused by updates to an existing entity
 
