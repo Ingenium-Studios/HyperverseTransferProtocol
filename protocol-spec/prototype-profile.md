@@ -222,6 +222,37 @@ P1 MUST reject unsupported message types with `unsupported_message`.
 
 Snapshot records, subscriber publications, request results, and client requests are intentionally distinct message types.
 
+### 6.1 Session state machine
+
+A P1 connection has these protocol states:
+
+```text
+CONNECTED
+   │ session.hello
+   ▼
+NEGOTIATED
+   │ realm.join
+   ▼
+JOINING
+   │ realm.snapshot.end
+   ▼
+JOINED
+   │ socket close
+   ▼
+CLOSED
+```
+
+Rules:
+
+- `session.hello` is valid only in `CONNECTED`;
+- `realm.join` is valid only in `NEGOTIATED`;
+- snapshot messages are host-originated and valid only while the connection is `JOINING`;
+- `entity.create`, `entity.delete`, `component.set`, `component.patch`, and `subscription.set` are valid only in `JOINED`;
+- canonical subscriber publications and view enter/leave messages are not delivered during `JOINING`; they are buffered according to §9;
+- a client request received in the wrong state returns `invalid_state`;
+- P1 has no separate `realm.leave` message; leaving is performed by closing the WebSocket. A later profile may add multi-realm or leave/rejoin semantics without changing P1.
+
+
 ---
 
 ## 7. Realm epoch and sequence semantics
@@ -781,7 +812,27 @@ A subscriber for whom the new entity is visible receives:
 
 P1 uses RFC 7396 JSON Merge Patch against the component's `state` object.
 
-`component.set` has the same metadata fields but replaces `patch` with a complete `state`.
+`component.set` has the same metadata fields but replaces `patch` with a complete `state`. For example:
+
+```json
+{
+  "hvtp": "0.2",
+  "id": "req-set-material-01",
+  "type": "component.set",
+  "realm": "urn:hvtp:realm:prototype-world",
+  "body": {
+    "entityId": "entity:01K7CUBE000000000000001",
+    "component": "hvtp.material@1",
+    "authorityEpoch": 1,
+    "baseRevision": 1,
+    "state": {
+      "baseColor": [0.25, 0.5, 0.75, 1]
+    }
+  }
+}
+```
+
+For P1 non-presence entities, `component.set` and `component.patch` are valid only for `hvtp.transform@1` and `hvtp.material@1`. Attempts to mutate `hvtp.renderable@1` or any presence component are rejected by the P1 authorization policy.
 
 ### 14.11 Canonical component update
 
