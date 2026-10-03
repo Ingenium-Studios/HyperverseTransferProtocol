@@ -232,17 +232,22 @@ See [Prototype Profile P1](./protocol-spec/prototype-profile.md) and [P1 Conform
 
 Implementation has started on the P1 reference stack.
 
-The first bounded slice currently provides:
+The first two bounded slices currently provide:
 
 - an npm/TypeScript workspace rooted at `/packages`;
-- `@hvtp/protocol-types` with P1 constants, error codes, closed-shape `session.hello` validation, request-ID correlation, malformed-JSON classification, and duplicate decoded-key detection;
-- `@hvtp/reference-host` with a WebSocket/HTTP entry point, fatal UTF-8 decoding, P1 message-size enforcement, `session.hello → session.welcome` negotiation, session-state enforcement, advertised limits/asset base, and serving of the checked-in unit-cube fixture;
-- unit tests for validator/error-correlation behavior and the initial session state machine;
-- a WebSocket integration test for hello negotiation.
+- `@hvtp/protocol-types` with P1 constants, error codes, closed-shape request validation, request-ID correlation, malformed-JSON classification, duplicate decoded-key detection, `realm.join`, and `SubscriptionSelector` validation;
+- `@hvtp/reference-host` with a WebSocket/HTTP entry point, fatal UTF-8 decoding, P1 message-size enforcement, `session.hello → session.welcome` negotiation, advertised limits/asset base, and serving of the checked-in unit-cube fixture;
+- the initial connection lifecycle through `CONNECTED → NEGOTIATED → JOINING → JOINED`;
+- one host process realm epoch shared by joined sessions;
+- validated join of the single P1 prototype realm;
+- a host-created, participant-private, static presence entity;
+- ordered initial snapshot emission: `realm.joined → realm.snapshot.begin → entity.snapshot(presence) → realm.snapshot.end`;
+- transition to `JOINED` only after the complete initial snapshot batch has been enqueued;
+- unit and real WebSocket integration tests for the implemented lifecycle.
 
-This is **not yet a P1-conformant host**. Realm join, snapshots, entity/component state, persistence, subscriptions, mutation ordering, deduplication, and the remaining conformance cases are intentionally still unimplemented.
+This is **not yet a P1-conformant host**. Durable shared world state, persistence, post-join subscription replacement/view lifecycle, entity/component mutations, canonical mutation ordering, request deduplication, Three.js rendering, and the remaining conformance cases are intentionally still unimplemented.
 
-The implementation branch is layered on top of the reviewed P1 specification rather than merging that specification PR implicitly.
+The reviewed HVTP 0.2/P1 specification is now merged on `main`; implementation work continues separately in the reference implementation PR.
 
 ---
 
