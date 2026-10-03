@@ -14,7 +14,7 @@ P1 is intentionally small, but the rules below are normative. An implementation 
 
 ## 1. Reference topology
 
-\`\`\`text
+```text
                   HVTP/WS
                       │
               TypeScript Host
@@ -24,7 +24,7 @@ P1 is intentionally small, but the rules below are normative. An implementation 
          │            │            │
     Three.js A   Three.js B   Headless Agent
        human        human          agent
-\`\`\`
+```
 
 The first visual clients SHOULD be browser clients using Three.js for rapid iteration.
 
@@ -54,7 +54,7 @@ P1 fixes:
 - **portable behaviours:** unsupported;
 - **portable physics:** unsupported.
 
-P1 MUST reject \`component.ephemeral\`. Ephemeral transport is deliberately postponed until a later profile defines its lifecycle independently from durable state.
+P1 MUST reject `component.ephemeral`. Ephemeral transport is deliberately postponed until a later profile defines its lifecycle independently from durable state.
 
 A prototype that adds deferred features before satisfying the P1 conformance suite is missing the point. Architecture bingo remains non-normative.
 
@@ -70,11 +70,11 @@ P1 uses the HVTP 0.2 transform convention:
 - +Y: up;
 - +Z: forward;
 - quaternion encoding: **[x, y, z, w]**;
-- quaternions MUST be finite and normalized within an implementation tolerance of \`1e-5\`;
-- P1 scale components MUST be finite, greater than zero, and no greater than \`1000\`;
-- P1 position components MUST be finite and in the inclusive range \`[-1_000_000, 1_000_000]\` metres.
+- quaternions MUST be finite and normalized within an implementation tolerance of `1e-5`;
+- P1 scale components MUST be finite, greater than zero, and no greater than `1000`;
+- P1 position components MUST be finite and in the inclusive range `[-1_000_000, 1_000_000]` metres.
 
-\`hvtp.material@1.baseColor\` is linear-light RGBA. All four values MUST be finite and in \`[0, 1]\`.
+`hvtp.material@1.baseColor` is linear-light RGBA. All four values MUST be finite and in `[0, 1]`.
 
 For P1, a material base-color override applies to every compatible primitive in the referenced renderable and replaces that primitive's runtime base-color factor. Texture sampling is not replaced.
 
@@ -84,16 +84,16 @@ For P1, a material base-color override applies to every compatible primitive in 
 
 P1 requires:
 
-- \`hvtp.transform@1\`;
-- \`hvtp.renderable@1\`;
-- \`hvtp.material@1\`;
-- \`hvtp.presence@1\`.
+- `hvtp.transform@1`;
+- `hvtp.renderable@1`;
+- `hvtp.material@1`;
+- `hvtp.presence@1`.
 
 Optional core components such as ownership, portable permissions, interactions, physics, and behaviours are not required for P1.
 
 Every P1 component instance uses:
 
-\`\`\`json
+```json
 {
   "revision": 4,
   "authority": "host",
@@ -101,7 +101,7 @@ Every P1 component instance uses:
   "consistency": "authoritative",
   "state": {}
 }
-\`\`\`
+```
 
 The P1 host MUST NOT delegate canonical component authority to clients. Clients submit mutation requests; the host remains the canonical writer.
 
@@ -109,9 +109,9 @@ The P1 host MUST NOT delegate canonical component authority to clients. Clients 
 
 ## 5. P1 authorization policy
 
-P1 has no durable user-authentication system. \`participantId\` values are session-scoped and issued by the host.
+P1 has no durable user-authentication system. `participantId` values are session-scoped and issued by the host.
 
-A client-supplied \`principal\` in \`session.hello\` is informational only in P1 and MUST NOT grant permissions.
+A client-supplied `principal` in `session.hello` is informational only in P1 and MUST NOT grant permissions.
 
 ### 5.1 Read policy
 
@@ -127,27 +127,27 @@ Subscription interest does not itself grant authorization. A later profile may r
 Any joined participant may:
 
 - create a non-presence P1 entity using the allowed components/fixture asset;
-- request \`hvtp.transform@1\` and \`hvtp.material@1\` mutations on a non-presence P1 entity;
+- request `hvtp.transform@1` and `hvtp.material@1` mutations on a non-presence P1 entity;
 - delete a non-presence P1 entity.
 
 This intentionally permissive collaborative policy exists only for the prototype.
 
-\`hvtp.renderable@1\` is immutable after creation in P1.
+`hvtp.renderable@1` is immutable after creation in P1.
 
 ### 5.3 Presence entities
 
-After a successful realm join, the host creates one session-scoped presence entity for that participant and returns its ID in \`realm.joined\`.
+After a successful realm join, the host creates one session-scoped presence entity for that participant and returns its ID in `realm.joined`.
 
 Rules:
 
 - only the host may create or delete a presence entity;
-- only the host may create or mutate \`hvtp.presence@1\`;
+- only the host may create or mutate `hvtp.presence@1`;
 - a participant may request transform mutations only for its **own** presence entity;
 - a participant MUST NOT mutate another participant's presence transform or binding;
-- a client MUST NOT create an entity containing \`hvtp.presence@1\`;
+- a client MUST NOT create an entity containing `hvtp.presence@1`;
 - presence entities are not durable across host restart.
 
-Violation MUST return \`not_authorized\` or \`presence_binding_violation\`.
+Violation MUST return `not_authorized` or `presence_binding_violation`.
 
 ---
 
@@ -157,28 +157,28 @@ P1 requires these message types.
 
 | Message | Direction | Purpose |
 | --- | --- | --- |
-| \`session.hello\` | client → host | negotiate protocol/client capabilities |
-| \`session.welcome\` | host → client | select version, assign participant, advertise limits |
-| \`realm.join\` | client → host | join realm with initial interest |
-| \`realm.joined\` | host → client | confirm realm, epoch, presence, subscription and snapshot boundary |
-| \`realm.snapshot.begin\` | host → client | begin replacement snapshot |
-| \`entity.snapshot\` | host → client | full entity record inside snapshot |
-| \`realm.snapshot.end\` | host → client | commit replacement snapshot |
-| \`entity.create\` | client → host | request entity creation |
-| \`entity.created\` | host → subscriber | canonical visible entity creation |
-| \`entity.delete\` | client → host | request global entity deletion |
-| \`entity.deleted\` | host → subscriber | canonical global entity deletion |
-| \`component.set\` | client → host | request full authoritative state replacement |
-| \`component.patch\` | client → host | request JSON Merge Patch against state |
-| \`component.updated\` | host → subscriber | canonical full component state after mutation |
-| \`subscription.set\` | client → host | replace active interest declaration |
-| \`subscription.applied\` | host → client | report effective subscription and boundary |
-| \`view.entity.enter\` | host → client | materialize full entity entering effective view |
-| \`view.entity.leave\` | host → client | evict entity from this client's view only |
-| \`ack\` | host → requester | terminal committed result |
-| \`error\` | host → requester | terminal rejected result |
+| `session.hello` | client → host | negotiate protocol/client capabilities |
+| `session.welcome` | host → client | select version, assign participant, advertise limits |
+| `realm.join` | client → host | join realm with initial interest |
+| `realm.joined` | host → client | confirm realm, epoch, presence, subscription and snapshot boundary |
+| `realm.snapshot.begin` | host → client | begin replacement snapshot |
+| `entity.snapshot` | host → client | full entity record inside snapshot |
+| `realm.snapshot.end` | host → client | commit replacement snapshot |
+| `entity.create` | client → host | request entity creation |
+| `entity.created` | host → subscriber | canonical visible entity creation |
+| `entity.delete` | client → host | request global entity deletion |
+| `entity.deleted` | host → subscriber | canonical global entity deletion |
+| `component.set` | client → host | request full authoritative state replacement |
+| `component.patch` | client → host | request JSON Merge Patch against state |
+| `component.updated` | host → subscriber | canonical full component state after mutation |
+| `subscription.set` | client → host | replace active interest declaration |
+| `subscription.applied` | host → client | report effective subscription and boundary |
+| `view.entity.enter` | host → client | materialize full entity entering effective view |
+| `view.entity.leave` | host → client | evict entity from this client's view only |
+| `ack` | host → requester | terminal committed result |
+| `error` | host → requester | terminal rejected result |
 
-P1 MUST reject unsupported message types with \`unsupported_message\`.
+P1 MUST reject unsupported message types with `unsupported_message`.
 
 Snapshot records, subscriber publications, request results, and client requests are intentionally distinct message types.
 
@@ -188,15 +188,15 @@ Snapshot records, subscriber publications, request results, and client requests 
 
 The reference realm identifier is:
 
-\`\`\`text
+```text
 urn:hvtp:realm:prototype-world
-\`\`\`
+```
 
-P1 uses \`seq\` as a **realm mutation watermark**.
+P1 uses `seq` as a **realm mutation watermark**.
 
 - Every accepted persistent world mutation increments the realm sequence exactly once.
 - The resulting canonical subscriber messages reference that sequence.
-- A single mutation may result in different subscriber-specific messages sharing the same \`seq\`.
+- A single mutation may result in different subscriber-specific messages sharing the same `seq`.
 - Snapshot/control messages do not consume realm sequence numbers.
 - Interest filtering makes observed realm sequences sparse. Receiving sequence 100 then 103 is legal.
 - Clients MUST NOT treat sequence gaps as packet loss.
@@ -205,7 +205,7 @@ P1 uses \`seq\` as a **realm mutation watermark**.
 
 ### 7.1 Host restart
 
-P1 issues a new \`realmEpoch\` on every host process start.
+P1 issues a new `realmEpoch` on every host process start.
 
 Persistent entity/component state and revisions survive restart, but session participants, presence entities, request-deduplication state, subscriptions, and the previous realm sequencing domain do not.
 
@@ -220,11 +220,11 @@ For a durable mutation, the P1 host MUST:
 1. validate syntax, authorization, authority epoch, and base revision;
 2. compute the canonical new state;
 3. durably commit the entity/component state, component revision, deletion/tombstone state where applicable, and realm mutation sequence in one persistence transaction or equivalent atomic unit;
-4. only after that durable commit, send terminal \`ack\` and canonical subscriber publications.
+4. only after that durable commit, send terminal `ack` and canonical subscriber publications.
 
-An \`ack\` with \`status: "committed"\` means the operation passed the P1 durability boundary.
+An `ack` with `status: "committed"` means the operation passed the P1 durability boundary.
 
-If persistence fails, the host MUST return \`error\` when possible and MUST NOT publish the mutation as canonical.
+If persistence fails, the host MUST return `error` when possible and MUST NOT publish the mutation as canonical.
 
 ---
 
@@ -233,21 +233,21 @@ If persistence fails, the host MUST return \`error\` when possible and MUST NOT 
 When a participant joins:
 
 1. the host resolves read authorization and the requested initial subscription;
-2. the host captures the effective visible entity set at realm sequence \`snapshotBaseSeq\`;
-3. the host sends \`realm.joined\`;
-4. the host sends \`realm.snapshot.begin\`;
-5. the host sends zero or more \`entity.snapshot\` messages containing complete visible entity state;
-6. the host sends \`realm.snapshot.end\`;
-7. while steps 4–6 are in progress, subscriber-relevant world/view changes with sequence greater than \`snapshotBaseSeq\` are buffered for that connection;
-8. after \`realm.snapshot.end\`, buffered changes are flushed in increasing realm-sequence order.
+2. the host captures the effective visible entity set at realm sequence `snapshotBaseSeq`;
+3. the host sends `realm.joined`;
+4. the host sends `realm.snapshot.begin`;
+5. the host sends zero or more `entity.snapshot` messages containing complete visible entity state;
+6. the host sends `realm.snapshot.end`;
+7. while steps 4–6 are in progress, subscriber-relevant world/view changes with sequence greater than `snapshotBaseSeq` are buffered for that connection;
+8. after `realm.snapshot.end`, buffered changes are flushed in increasing realm-sequence order.
 
 Live canonical publications MUST NOT be interleaved inside the snapshot stream.
 
-The client MUST build the snapshot as a replacement view. At \`realm.snapshot.end\`, it replaces its previous realm view with the completed snapshot, then applies buffered live messages.
+The client MUST build the snapshot as a replacement view. At `realm.snapshot.end`, it replaces its previous realm view with the completed snapshot, then applies buffered live messages.
 
-Snapshot messages repeat the same \`snapshotId\`, \`realmEpoch\`, and \`snapshotBaseSeq\`.
+Snapshot messages repeat the same `snapshotId`, `realmEpoch`, and `snapshotBaseSeq`.
 
-If the connection fails before \`realm.snapshot.end\`, the partial snapshot MUST be discarded.
+If the connection fails before `realm.snapshot.end`, the partial snapshot MUST be discarded.
 
 ---
 
@@ -268,38 +268,38 @@ P1 does not require occlusion, portals, semantic queries, region routing, or ada
 
 ### 10.1 Subscription replacement
 
-\`subscription.set\` replaces the previous interest declaration; it is not additive.
+`subscription.set` replaces the previous interest declaration; it is not additive.
 
 The host:
 
-1. captures a boundary \`baseRealmSeq\`;
+1. captures a boundary `baseRealmSeq`;
 2. computes the new authorized effective view at that boundary;
 3. buffers post-boundary subscriber-relevant changes;
-4. sends \`subscription.applied\` with a new \`subscriptionId\`, the effective selectors, and \`baseRealmSeq\`;
-5. sends \`view.entity.leave\` for entities in the old view but not the new view;
-6. sends \`view.entity.enter\` with complete current entity state for entities in the new view but not the old view;
+4. sends `subscription.applied` with a new `subscriptionId`, the effective selectors, and `baseRealmSeq`;
+5. sends `view.entity.leave` for entities in the old view but not the new view;
+6. sends `view.entity.enter` with complete current entity state for entities in the new view but not the old view;
 7. flushes buffered post-boundary changes.
 
-The enter/leave messages created by the replacement MAY reference \`baseRealmSeq\`; they do not create new realm mutations.
+The enter/leave messages created by the replacement MAY reference `baseRealmSeq`; they do not create new realm mutations.
 
 ### 10.2 Membership changes caused by world mutation
 
 For a canonical mutation at realm sequence N:
 
-- entity visible before and after → send the normal canonical change such as \`component.updated\`;
-- invisible before, visible after → send \`view.entity.enter\` with complete post-mutation entity state and \`seq: N\`;
-- visible before, invisible after → send \`view.entity.leave\` with \`seq: N\`;
+- entity visible before and after → send the normal canonical change such as `component.updated`;
+- invisible before, visible after → send `view.entity.enter` with complete post-mutation entity state and `seq: N`;
+- visible before, invisible after → send `view.entity.leave` with `seq: N`;
 - invisible before and after → send nothing.
 
-A client receiving \`view.entity.leave\` MUST remove the entity from its local view without creating a global tombstone.
+A client receiving `view.entity.leave` MUST remove the entity from its local view without creating a global tombstone.
 
-A client receiving \`view.entity.enter\` MUST be able to materialize the entity using that message alone.
+A client receiving `view.entity.enter` MUST be able to materialize the entity using that message alone.
 
 ### 10.3 Global deletion
 
-A globally deleted entity that was visible to a subscriber produces \`entity.deleted\`.
+A globally deleted entity that was visible to a subscriber produces `entity.deleted`.
 
-\`entity.deleted\` is semantically different from \`view.entity.leave\`.
+`entity.deleted` is semantically different from `view.entity.leave`.
 
 ---
 
@@ -312,9 +312,9 @@ Within a session, the host MUST cache the terminal result of every mutating requ
 If the same session repeats:
 
 - the same request ID with byte-for-byte equivalent semantic request content → return the previously cached terminal result and MUST NOT execute the mutation again;
-- the same request ID with different semantic content → reject with \`request_id_conflict\`.
+- the same request ID with different semantic content → reject with `request_id_conflict`.
 
-Every accepted/rejected mutating request receives \`ack\` or \`error\` directly, regardless of the requester's active subscription.
+Every accepted/rejected mutating request receives `ack` or `error` directly, regardless of the requester's active subscription.
 
 The requester MUST NOT rely on subscriber publications to learn its own operation result.
 
@@ -335,7 +335,7 @@ A client MUST NOT blindly replay an old-session mutation after reconnect.
 
 ## 12. Resource and asset limits
 
-The reference host advertises P1 limits in \`session.welcome\`.
+The reference host advertises P1 limits in `session.welcome`.
 
 Required default limits:
 
@@ -353,25 +353,25 @@ Required default limits:
 
 The host MAY advertise smaller limits but MUST NOT silently accept values above its advertised limits.
 
-Exceeded limits return \`resource_limit\` when a response remains safe to send. If the outbound queue limit is exceeded, the host MAY close the connection rather than allocate unbounded memory.
+Exceeded limits return `resource_limit` when a response remains safe to send. If the outbound queue limit is exceeded, the host MAY close the connection rather than allocate unbounded memory.
 
 ### 12.1 P1 asset fixture
 
 P1 uses one checked-in conformance asset:
 
-\`\`\`text
+```text
 protocol-spec/fixtures/unit-cube.gltf
-\`\`\`
+```
 
 The reference host MUST serve it at:
 
-\`\`\`text
+```text
 /assets/p1/unit-cube.gltf
-\`\`\`
+```
 
-with media type \`model/gltf+json\`.
+with media type `model/gltf+json`.
 
-For P1, \`hvtp.renderable@1.asset.uri\` MUST equal that same-origin path. Arbitrary remote asset URLs are intentionally not supported.
+For P1, `hvtp.renderable@1.asset.uri` MUST equal that same-origin path. Arbitrary remote asset URLs are intentionally not supported.
 
 This restriction is a prototype safety/scope decision, not an HVTP core requirement.
 
@@ -381,7 +381,7 @@ This restriction is a prototype safety/scope decision, not an HVTP core requirem
 
 Three.js types MUST NOT leak into shared protocol state.
 
-\`\`\`text
+```text
 HVTP Entity
     │
     ▼
@@ -392,7 +392,7 @@ Three.js Adapter
     │
     ▼
 THREE.Object3D
-\`\`\`
+```
 
 The same wire/entity model must remain consumable by a headless agent and by a later independently implemented renderer.
 
@@ -404,13 +404,13 @@ An agent participant receives structured HVTP state; it does not require screens
 
 All messages use the core HVTP envelope.
 
-Client requests omit authoritative top-level \`realmEpoch\` and \`seq\`. When a mutation needs a fencing token, the last observed \`authorityEpoch\` appears inside the request body.
+Client requests omit authoritative top-level `realmEpoch` and `seq`. When a mutation needs a fencing token, the last observed `authorityEpoch` appears inside the request body.
 
-Host subscriber publications for persistent realm mutations carry top-level \`realmEpoch\` and \`seq\`.
+Host subscriber publications for persistent realm mutations carry top-level `realmEpoch` and `seq`.
 
 ### 14.1 Session hello
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "req-hello-01",
@@ -434,13 +434,13 @@ Host subscriber publications for persistent realm mutations carry top-level \`re
     }
   }
 }
-\`\`\`
+```
 
-Before \`session.welcome\`, the host MUST reject realm-scoped messages with \`invalid_state\`.
+Before `session.welcome`, the host MUST reject realm-scoped messages with `invalid_state`.
 
 ### 14.2 Session welcome
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "res-welcome-01",
@@ -465,11 +465,11 @@ Before \`session.welcome\`, the host MUST reject realm-scoped messages with \`in
     }
   }
 }
-\`\`\`
+```
 
 ### 14.3 Realm join
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "req-join-01",
@@ -485,13 +485,13 @@ Before \`session.welcome\`, the host MUST reject realm-scoped messages with \`in
     }
   }
 }
-\`\`\`
+```
 
-A participant may join only one P1 realm per connection. A second \`realm.join\` before leaving returns \`invalid_state\`.
+A participant may join only one P1 realm per connection. A second `realm.join` before leaving returns `invalid_state`.
 
 ### 14.4 Realm joined
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "res-joined-01",
@@ -519,11 +519,11 @@ A participant may join only one P1 realm per connection. A second \`realm.join\`
     ]
   }
 }
-\`\`\`
+```
 
 ### 14.5 Snapshot begin
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "snapshot-begin-01",
@@ -536,11 +536,11 @@ A participant may join only one P1 realm per connection. A second \`realm.join\`
     "snapshotBaseSeq": 120
   }
 }
-\`\`\`
+```
 
 ### 14.6 Entity snapshot
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "snapshot-entity-cube",
@@ -590,11 +590,11 @@ A participant may join only one P1 realm per connection. A second \`realm.join\`
     }
   }
 }
-\`\`\`
+```
 
 ### 14.7 Snapshot end
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "snapshot-end-01",
@@ -608,11 +608,11 @@ A participant may join only one P1 realm per connection. A second \`realm.join\`
     "entityCount": 1
   }
 }
-\`\`\`
+```
 
 ### 14.8 Entity creation request
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "req-create-cube-01",
@@ -648,17 +648,17 @@ A participant may join only one P1 realm per connection. A second \`realm.join\`
     }
   }
 }
-\`\`\`
+```
 
-A creation request MUST NOT provide canonical metadata such as \`revision\`, \`authority\`, \`authorityEpoch\`, or \`consistency\`. The host assigns it.
+A creation request MUST NOT provide canonical metadata such as `revision`, `authority`, `authorityEpoch`, or `consistency`. The host assigns it.
 
-Entity IDs are immutable after acceptance. An existing ID returns \`entity_exists\`.
+Entity IDs are immutable after acceptance. An existing ID returns `entity_exists`.
 
 ### 14.9 Canonical entity creation
 
 A subscriber for whom the new entity is visible receives:
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "pub-created-cube-01",
@@ -708,11 +708,11 @@ A subscriber for whom the new entity is visible receives:
     }
   }
 }
-\`\`\`
+```
 
 ### 14.10 Component patch request
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "req-move-cube-01",
@@ -728,17 +728,17 @@ A subscriber for whom the new entity is visible receives:
     }
   }
 }
-\`\`\`
+```
 
-P1 uses RFC 7396 JSON Merge Patch against the component's \`state\` object.
+P1 uses RFC 7396 JSON Merge Patch against the component's `state` object.
 
-\`component.set\` has the same metadata fields but replaces \`patch\` with a complete \`state\`.
+`component.set` has the same metadata fields but replaces `patch` with a complete `state`.
 
 ### 14.11 Canonical component update
 
 P1 subscriber publications send the complete resulting component envelope, not merely the originating patch:
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "pub-transform-01",
@@ -762,13 +762,13 @@ P1 subscriber publications send the complete resulting component envelope, not m
     }
   }
 }
-\`\`\`
+```
 
 ### 14.12 Entity deletion
 
 Request:
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "req-delete-cube-01",
@@ -778,11 +778,11 @@ Request:
     "entityId": "entity:01K7CUBE000000000000001"
   }
 }
-\`\`\`
+```
 
 Visible subscribers receive:
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "pub-deleted-cube-01",
@@ -794,11 +794,11 @@ Visible subscribers receive:
     "entityId": "entity:01K7CUBE000000000000001"
   }
 }
-\`\`\`
+```
 
 ### 14.13 Subscription replacement
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "req-subscription-02",
@@ -812,11 +812,11 @@ Visible subscribers receive:
     "entities": ["entity:pinned-01"]
   }
 }
-\`\`\`
+```
 
 Applied response:
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "res-subscription-02",
@@ -837,11 +837,11 @@ Applied response:
     }
   }
 }
-\`\`\`
+```
 
 ### 14.14 View enter
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "view-enter-01",
@@ -858,13 +858,13 @@ Applied response:
     }
   }
 }
-\`\`\`
+```
 
-The \`entity\` field MUST contain the complete authorized P1 component state for that entity; the empty component map above is abbreviated only to keep this document readable and is not a valid P1 materializable entity fixture.
+The `entity` field MUST contain the complete authorized P1 component state for that entity; the empty component map above is abbreviated only to keep this document readable and is not a valid P1 materializable entity fixture.
 
 ### 14.15 View leave
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "view-leave-01",
@@ -878,13 +878,13 @@ The \`entity\` field MUST contain the complete authorized P1 component state for
     "entityId": "entity:no-longer-visible"
   }
 }
-\`\`\`
+```
 
-Allowed reasons are \`subscription\`, \`interest\`, and \`authorization\`.
+Allowed reasons are `subscription`, `interest`, and `authorization`.
 
 ### 14.16 Terminal acknowledgement
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "res-ack-move-01",
@@ -901,13 +901,13 @@ Allowed reasons are \`subscription\`, \`interest\`, and \`authorization\`.
     "authorityEpoch": 1
   }
 }
-\`\`\`
+```
 
 The host sends this acknowledgement directly to the requester even if the resulting entity is outside the requester's effective view.
 
 ### 14.17 Terminal error
 
-\`\`\`json
+```json
 {
   "hvtp": "0.2",
   "id": "res-error-stale-01",
@@ -924,25 +924,25 @@ The host sends this acknowledgement directly to the requester even if the result
     "authorityEpoch": 1
   }
 }
-\`\`\`
+```
 
 P1 error codes MUST include:
 
-- \`unsupported_version\`;
-- \`unsupported_component\`;
-- \`unsupported_message\`;
-- \`realm_not_found\`;
-- \`invalid_state\`;
-- \`invalid_message\`;
-- \`invalid_component_state\`;
-- \`not_authorized\`;
-- \`presence_binding_violation\`;
-- \`stale_revision\`;
-- \`stale_authority_epoch\`;
-- \`entity_exists\`;
-- \`entity_not_found\`;
-- \`request_id_conflict\`;
-- \`resource_limit\`.
+- `unsupported_version`;
+- `unsupported_component`;
+- `unsupported_message`;
+- `realm_not_found`;
+- `invalid_state`;
+- `invalid_message`;
+- `invalid_component_state`;
+- `not_authorized`;
+- `presence_binding_violation`;
+- `stale_revision`;
+- `stale_authority_epoch`;
+- `entity_exists`;
+- `entity_not_found`;
+- `request_id_conflict`;
+- `resource_limit`.
 
 Clients MUST NOT need to parse human-readable error text.
 
@@ -967,7 +967,7 @@ The placeholder is a client error presentation and MUST NOT mutate shared HVTP s
 
 ### Material
 
-P1 clients apply \`hvtp.material@1.baseColor\` using the P1 linear RGBA semantics defined above.
+P1 clients apply `hvtp.material@1.baseColor` using the P1 linear RGBA semantics defined above.
 
 ---
 
@@ -1041,7 +1041,7 @@ Consciously deferred:
 
 ## 19. Suggested repository evolution
 
-\`\`\`text
+```text
 /protocol-spec
   hvtp.md
   prototype-profile.md
@@ -1057,6 +1057,6 @@ Consciously deferred:
 
 /examples                 # future
 /docs                     # future RFCs
-\`\`\`
+```
 
 This layout is informative rather than normative.
