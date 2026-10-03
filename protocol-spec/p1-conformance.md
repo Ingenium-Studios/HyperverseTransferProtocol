@@ -698,12 +698,12 @@ Initial subscription S0 includes E. Prepare two accepted replacement requests on
 - S1's `subscription.applied` + transition batch completes before S2's batch begins;
 - after S2 applies, the active generation is S2 and E is present;
 - subscriber-scoped messages carry their `subscriptionId`;
-- a deliberately delayed message tagged with S1 after S2 is active is ignored by the client;
+- a deliberately delayed subscriber-scoped message tagged with S1 after S2 is active is ignored because its `subscriptionId` does not equal the active one;
 - two legitimate messages sharing the same realm `seq` are not treated as duplicates merely because the sequence is equal.
 
 Repeat with a pre-boundary canonical publication already queued before S1: it is delivered before `subscription.applied(S1)`.
 
-A cached retry of either `subscription.set` returns cached `subscription.applied` but does not replay historical enter/leave publications.
+A cached retry of either `subscription.set` returns cached `subscription.applied` but does not replay historical enter/leave publications. If cached S1 is returned after S2 is active, its `previousSubscriptionId` no longer equals the current active ID, so it MUST NOT reactivate S1.
 
 ---
 
