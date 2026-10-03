@@ -21,7 +21,7 @@ The examples below use abbreviated payloads where the surrounding profile alread
 
 ### Actions
 
-1. A sends a valid \`entity.create\` for the P1 unit-cube asset.
+1. A sends a valid `entity.create` for the P1 unit-cube asset.
 2. Host commits it.
 3. A sends a valid transform patch.
 4. B sends a valid material patch using the current material revision.
@@ -30,12 +30,12 @@ The examples below use abbreviated payloads where the surrounding profile alread
 
 ### Required results
 
-- creator receives committed \`ack\`;
-- B receives \`entity.created\` with a full materializable entity;
+- creator receives committed `ack`;
+- B receives `entity.created` with a full materializable entity;
 - both accepted mutations advance exactly one component revision each;
 - canonical subscriber publications contain full resulting component envelopes;
 - after restart the entity, transform, material, and component revisions match the last durable state;
-- the new host process uses a new \`realmEpoch\`.
+- the new host process uses a new `realmEpoch`.
 
 ---
 
@@ -45,19 +45,19 @@ The examples below use abbreviated payloads where the surrounding profile alread
 
 A and B both observe:
 
-\`\`\`text
+```text
 hvtp.material@1 revision = 5
 authorityEpoch = 1
-\`\`\`
+```
 
 ### Actions
 
-A and B independently submit different \`component.patch\` requests with:
+A and B independently submit different `component.patch` requests with:
 
-\`\`\`text
+```text
 baseRevision = 5
 authorityEpoch = 1
-\`\`\`
+```
 
 ### Required results
 
@@ -65,7 +65,7 @@ Exactly one request commits first and creates revision 6.
 
 The other request MUST receive:
 
-\`\`\`json
+```json
 {
   "type": "error",
   "body": {
@@ -74,7 +74,7 @@ The other request MUST receive:
     "authorityEpoch": 1
   }
 }
-\`\`\`
+```
 
 There MUST NOT be silent last-writer-wins behaviour.
 
@@ -86,22 +86,22 @@ There MUST NOT be silent last-writer-wins behaviour.
 
 A component's current metadata is:
 
-\`\`\`text
+```text
 revision = 9
 authorityEpoch = 3
-\`\`\`
+```
 
 ### Action
 
-A client submits a mutation carrying \`authorityEpoch: 2\`, regardless of its base revision.
+A client submits a mutation carrying `authorityEpoch: 2`, regardless of its base revision.
 
 ### Required result
 
 Reject with:
 
-\`\`\`text
+```text
 stale_authority_epoch
-\`\`\`
+```
 
 The request MUST NOT be accepted because a component or future extension supports mergeable state.
 
@@ -121,7 +121,7 @@ A canonical transform mutation moves E to X=90.
 
 ### Required results
 
-- A receives \`view.entity.enter\` at the mutation's realm \`seq\`;
+- A receives `view.entity.enter` at the mutation's realm `seq`;
 - the message contains complete authorized current state for E;
 - A does NOT receive only a transform patch for an unknown entity;
 - A can materialize E without requesting historical state.
@@ -144,13 +144,13 @@ A canonical transform mutation moves E to X=90.
 
 For step 1:
 
-- A receives \`view.entity.leave\`;
+- A receives `view.entity.leave`;
 - A removes E from its local view;
 - A does not create a global deletion tombstone.
 
 For step 2:
 
-- A receives \`view.entity.enter\` with full current state;
+- A receives `view.entity.enter` with full current state;
 - stale local state from the earlier incarnation is not reused as authoritative state.
 
 ---
@@ -161,7 +161,7 @@ For step 2:
 
 A requests:
 
-\`\`\`json
+```json
 {
   "spatial": {
     "center": [0, 0, 0],
@@ -169,9 +169,9 @@ A requests:
   },
   "entities": ["entity:far-away"]
 }
-\`\`\`
+```
 
-\`entity:far-away\` is at X=1000.
+`entity:far-away` is at X=1000.
 
 ### Required result
 
@@ -189,17 +189,17 @@ A's old subscription includes E. A replacement subscription excludes E.
 
 ### Action
 
-A submits \`subscription.set\`.
+A submits `subscription.set`.
 
 ### Required results
 
 The host sends:
 
-1. \`subscription.applied\` with a new \`subscriptionId\` and \`baseRealmSeq\`;
-2. \`view.entity.leave\` for E;
+1. `subscription.applied` with a new `subscriptionId` and `baseRealmSeq`;
+2. `view.entity.leave` for E;
 3. buffered post-boundary relevant changes afterwards.
 
-The host MUST NOT emit \`entity.deleted\` for E merely because A no longer subscribes to it.
+The host MUST NOT emit `entity.deleted` for E merely because A no longer subscribes to it.
 
 Other subscribers whose effective view still includes E remain unaffected.
 
@@ -209,7 +209,7 @@ Other subscribers whose effective view still includes E remain unaffected.
 
 ### Setup
 
-The host captures a join snapshot at \`snapshotBaseSeq = 200\`.
+The host captures a join snapshot at `snapshotBaseSeq = 200`.
 
 ### Action
 
@@ -222,7 +222,7 @@ On the joining connection:
 1. snapshot begin/entity records/end are delivered without interleaved live publication;
 2. the snapshot represents state through sequence 200;
 3. the sequence-201 change is buffered;
-4. after \`realm.snapshot.end\`, the canonical sequence-201 view change is delivered;
+4. after `realm.snapshot.end`, the canonical sequence-201 view change is delivered;
 5. the final client state equals canonical state at sequence 201;
 6. no state is applied twice.
 
@@ -255,13 +255,13 @@ The client MUST NOT interpret missing 301/302 as packet loss or request a resync
 
 ### Setup
 
-A sends mutating request ID \`req-77\`. The host commits it and caches the terminal result for A's session.
+A sends mutating request ID `req-77`. The host commits it and caches the terminal result for A's session.
 
 The response is delayed or ignored by the test client.
 
 ### Action
 
-Within the same session, A resends the semantically identical request with ID \`req-77\`.
+Within the same session, A resends the semantically identical request with ID `req-77`.
 
 ### Required results
 
@@ -275,19 +275,19 @@ Within the same session, A resends the semantically identical request with ID \`
 
 ### Setup
 
-Request ID \`req-88\` already has a terminal result in the current session.
+Request ID `req-88` already has a terminal result in the current session.
 
 ### Action
 
-The same session reuses \`req-88\` with different semantic request content.
+The same session reuses `req-88` with different semantic request content.
 
 ### Required result
 
 Reject with:
 
-\`\`\`text
+```text
 request_id_conflict
-\`\`\`
+```
 
 No world mutation occurs.
 
@@ -297,7 +297,7 @@ No world mutation occurs.
 
 ### Setup
 
-A sends a valid mutation. The host may or may not have committed it when the connection disappears before A receives \`ack\` or \`error\`.
+A sends a valid mutation. The host may or may not have committed it when the connection disappears before A receives `ack` or `error`.
 
 ### Actions
 
@@ -327,9 +327,9 @@ A moves the entity outside A's effective view.
 
 ### Required results
 
-- A receives terminal \`ack\` directly;
-- A receives \`view.entity.leave\` as appropriate;
-- successful operation reporting does not depend on receiving \`component.updated\`.
+- A receives terminal `ack` directly;
+- A receives `view.entity.leave` as appropriate;
+- successful operation reporting does not depend on receiving `component.updated`.
 
 ---
 
@@ -343,11 +343,11 @@ Participants A and B each have host-created presence entities.
 
 A attempts any of the following:
 
-- create a new entity containing \`hvtp.presence@1\` bound to B;
-- set/patch B's \`hvtp.presence@1\`;
+- create a new entity containing `hvtp.presence@1` bound to B;
+- set/patch B's `hvtp.presence@1`;
 - set/patch B's presence transform.
 
-Each request MUST be rejected with \`not_authorized\` or \`presence_binding_violation\`.
+Each request MUST be rejected with `not_authorized` or `presence_binding_violation`.
 
 B's presence state MUST remain unchanged.
 
@@ -361,19 +361,19 @@ A may request a transform mutation for A's own presence.
 
 A sends:
 
-\`\`\`json
+```json
 {
   "type": "component.ephemeral"
 }
-\`\`\`
+```
 
 ### Required result
 
 Reject with:
 
-\`\`\`text
+```text
 unsupported_message
-\`\`\`
+```
 
 The message MUST NOT mutate an authoritative component or bypass persistence/revision rules.
 
@@ -387,13 +387,13 @@ A creates the happy-path cube.
 
 ### Required result
 
-The creation request includes \`hvtp.renderable@1\` referencing:
+The creation request includes `hvtp.renderable@1` referencing:
 
-\`\`\`text
+```text
 /assets/p1/unit-cube.gltf
-\`\`\`
+```
 
-The host rejects an arbitrary remote asset URI with \`not_authorized\`, \`invalid_component_state\`, or \`resource_limit\` as appropriate.
+The host rejects an arbitrary remote asset URI with `not_authorized`, `invalid_component_state`, or `resource_limit` as appropriate.
 
 A client MUST NOT infer cube geometry from the entity ID, display name, or test case.
 
@@ -401,15 +401,15 @@ A client MUST NOT infer cube geometry from the entity ID, display name, or test 
 
 ## C17 — Invalid transform interpretation
 
-Each of the following transform states MUST be rejected with \`invalid_component_state\`:
+Each of the following transform states MUST be rejected with `invalid_component_state`:
 
 - NaN or Infinity encoded by a non-standard parser;
-- quaternion whose norm differs from 1 by more than \`1e-5\`;
+- quaternion whose norm differs from 1 by more than `1e-5`;
 - zero or negative P1 scale;
 - scale greater than 1000;
 - position outside the P1 coordinate range.
 
-A conforming independent renderer interprets quaternion order as \`[x, y, z, w]\`, uses metres, right-handed coordinates, +Y up, +Z forward.
+A conforming independent renderer interprets quaternion order as `[x, y, z, w]`, uses metres, right-handed coordinates, +Y up, +Z forward.
 
 ---
 
@@ -417,15 +417,15 @@ A conforming independent renderer interprets quaternion order as \`[x, y, z, w]\
 
 Given:
 
-\`\`\`json
+```json
 {
   "baseColor": [0.25, 0.5, 0.75, 1.0]
 }
-\`\`\`
+```
 
 two conforming clients MUST interpret those values as linear-light RGBA base-color factors.
 
-Values outside \`[0, 1]\`, non-finite values, or arrays of the wrong length are rejected with \`invalid_component_state\`.
+Values outside `[0, 1]`, non-finite values, or arrays of the wrong length are rejected with `invalid_component_state`.
 
 ---
 
@@ -437,7 +437,7 @@ The persistence layer is fault-injected so a valid mutation cannot complete its 
 
 ### Required results
 
-- no \`ack\` with \`status: "committed"\` is sent;
+- no `ack` with `status: "committed"` is sent;
 - no canonical subscriber publication is sent;
 - after recovery/restart, canonical state remains at the previous revision;
 - the host returns an error when it can do so safely.
@@ -450,7 +450,7 @@ The exact storage engine error is not exposed as a protocol contract.
 
 ### Setup
 
-A and B are connected under \`realmEpoch = E1\`.
+A and B are connected under `realmEpoch = E1`.
 
 ### Action
 
@@ -459,7 +459,7 @@ Host process restarts.
 ### Required results
 
 - old connections terminate;
-- new sessions receive a new realm epoch E2 where \`E2 != E1\`;
+- new sessions receive a new realm epoch E2 where `E2 != E1`;
 - old participant IDs, presence entities, subscriptions, and request-dedup caches are not treated as valid session state;
 - durable non-presence entities remain;
 - reconnecting clients take new snapshots.
@@ -470,7 +470,7 @@ Host process restarts.
 
 Test at least:
 
-- JSON frame larger than advertised \`maxMessageBytes\`;
+- JSON frame larger than advertised `maxMessageBytes`;
 - subscription radius larger than advertised maximum;
 - too many explicit entity IDs;
 - entity serialization larger than maximum;
@@ -481,7 +481,7 @@ Test at least:
 
 The host remains bounded.
 
-Where a safe response is possible, return \`resource_limit\`. For outbound queue exhaustion the host may close the connection.
+Where a safe response is possible, return `resource_limit`. For outbound queue exhaustion the host may close the connection.
 
 The implementation MUST NOT allocate without bound to satisfy an invalid or overloaded client.
 
@@ -495,7 +495,7 @@ A future/extended host marks entity S unreadable to A but A can guess its entity
 
 ### Action
 
-A explicitly requests S in \`subscription.set\`.
+A explicitly requests S in `subscription.set`.
 
 ### Required result
 
@@ -503,9 +503,9 @@ S does not enter A's effective view.
 
 The P1 reference realm currently exposes shared world state publicly to joined participants, but implementations MUST preserve the ordering principle:
 
-\`\`\`text
+```text
 authorization → interest selection → delivery
-\`\`\`
+```
 
 Interest is not a capability grant.
 
@@ -541,18 +541,18 @@ A and B both see E.
 ### Actions
 
 1. A changes subscription so E leaves A's view.
-2. Later B submits valid \`entity.delete\` for E.
+2. Later B submits valid `entity.delete` for E.
 
 ### Required results
 
 Step 1:
 
-- A receives \`view.entity.leave\`;
+- A receives `view.entity.leave`;
 - B continues to see E.
 
 Step 2:
 
-- B receives \`entity.deleted\`;
+- B receives `entity.deleted`;
 - E is globally tombstoned/deleted;
 - if A later requests a subscription that would have included E, E does not reappear.
 
