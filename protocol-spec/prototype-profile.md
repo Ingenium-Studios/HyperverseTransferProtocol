@@ -485,6 +485,23 @@ Client requests omit authoritative top-level `realmEpoch` and `seq`. When a muta
 
 Host subscriber publications for persistent realm mutations carry top-level `realmEpoch` and `seq`.
 
+### 14.0 JSON shape rules
+
+P1 deliberately uses a closed wire shape:
+
+- messages MUST be valid UTF-8 JSON objects;
+- duplicate object keys MUST be rejected as `invalid_message`;
+- for a known P1 message type, fields not specified by this profile are rejected as `invalid_message`;
+- required fields shown by the normative examples MUST be present unless the surrounding text explicitly marks them optional;
+- P1 participant `kind` is either `human` or `agent`;
+- client-generated message/entity IDs are non-empty opaque strings no longer than 128 UTF-8 bytes;
+- realm IDs, participant IDs, subscription IDs, snapshot IDs, and host publication IDs are opaque to clients;
+- JSON numbers used for transforms/materials MUST satisfy the component constraints in §3;
+- `realm.join.body.subscription` is required, although it may be an empty object to request no subscribed world entities beyond the participant's own presence.
+
+These closed-shape rules are specific to P1. A later extensible profile may define negotiated optional fields.
+
+
 ### 14.1 Session hello
 
 ```json
