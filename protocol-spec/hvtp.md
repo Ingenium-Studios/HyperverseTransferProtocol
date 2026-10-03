@@ -204,9 +204,9 @@ Authoritative mutable components MUST carry a monotonically increasing revision 
 
 Authoritative components MUST also expose an `authorityEpoch` or equivalent token that changes whenever canonical authority changes. This prevents delayed messages from a former authority being accepted after handoff.
 
-A host MUST reject a mutation that specifies a stale authority epoch. An obsolete authority epoch is a fencing failure and MUST NOT be accepted merely because a component is mergeable.
+A host MUST reject a mutation whose authority epoch does not match the component's current authority epoch. An obsolete or future authority epoch is a fencing failure and MUST NOT be accepted merely because a component is mergeable.
 
-For `authoritative` components, a stale `baseRevision` MUST also be rejected. A `mergeable` component extension MAY define how stale state revisions are reconciled, but that extension does not waive authority-epoch fencing.
+For `authoritative` components, `baseRevision` MUST match the current component revision exactly. A `mergeable` component extension MAY define how state revisions are reconciled, but that extension does not waive authority-epoch fencing.
 
 ### 5.2 Core consistency classes
 
@@ -235,7 +235,17 @@ The initial core component registry is intentionally small.
 
 Spatial transform in realm-local coordinates.
 
-HVTP 0.2 uses metres for position and a right-handed Cartesian coordinate system with +X right, +Y up, and +Z forward. Rotation is a unit quaternion encoded as `[x, y, z, w]`. Scale is dimensionless. Numeric values MUST be finite JSON numbers; profiles MAY impose tighter ranges.
+HVTP 0.2 uses metres for position and a right-handed Cartesian coordinate system with +X right, +Y up, and +Z forward. Rotation is an **active right-handed rotation** represented by a unit quaternion encoded as `[x, y, z, w]`. Scale is dimensionless. Numeric values MUST be finite JSON numbers; profiles MAY impose tighter ranges.
+
+For a point `p` expressed in an entity's local asset space, the entity transform is composed as:
+
+```text
+realmPoint = translation + Rotation(quaternion) × (scale ⊙ p)
+```
+
+Equivalently, for column-vector homogeneous coordinates, the entity matrix is `T × R × S`: scale is applied in local axes, then rotation, then translation.
+
+When `hvtp.renderable@1` selects a glTF scene/node, that asset's own glTF node hierarchy is evaluated first according to glTF semantics. The HVTP entity transform is the outer transform applied to the resulting selected-node asset space. This prevents engine adapters from choosing incompatible scale/rotation ordering.
 
 ```json
 {
