@@ -121,8 +121,14 @@ test("realm.join enqueues joined + one private presence snapshot before JOINED",
 
   assert.equal(joined.body.participantId, welcome.body.participantId);
   assert.equal(joined.body.presenceEntityId, entity.body.entity.id);
-  assert.equal(entity.body.entity.components["hvtp.presence@1"].state.participantId, welcome.body.participantId);
-  assert.equal(entity.body.entity.components["hvtp.presence@1"].state.kind, "agent");
+  assert.ok("hvtp.presence@1" in entity.body.entity.components);
+  if ("hvtp.presence@1" in entity.body.entity.components) {
+    assert.equal(
+      entity.body.entity.components["hvtp.presence@1"].state.participantId,
+      welcome.body.participantId,
+    );
+    assert.equal(entity.body.entity.components["hvtp.presence@1"].state.kind, "agent");
+  }
   assert.deepEqual(Object.keys(entity.body.entity.components).sort(), ["hvtp.presence@1", "hvtp.transform@1"]);
   assert.deepEqual(joined.body.effectiveSubscription, {
     spatial: { center: [0, 0, 0], radius: 100 },
