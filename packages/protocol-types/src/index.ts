@@ -109,6 +109,8 @@ export interface ErrorMessage {
   readonly hvtp: typeof HVTP_VERSION;
   readonly id: string;
   readonly type: "error";
+  readonly realm?: typeof P1_REALM_ID;
+  readonly realmEpoch?: string;
   readonly body: {
     readonly ref: string | null;
     readonly code: P1ErrorCode;
