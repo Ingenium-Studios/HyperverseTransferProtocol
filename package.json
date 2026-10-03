@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "build": "npm run build --workspace @hvtp/protocol-types && npm run build --workspace @hvtp/reference-host",
