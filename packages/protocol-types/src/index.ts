@@ -89,6 +89,117 @@ export interface RealmJoinRequest {
   };
 }
 
+export type P1MutableComponent = "hvtp.transform@1" | "hvtp.material@1";
+
+interface MutationRequestEnvelope {
+  readonly hvtp: typeof HVTP_VERSION;
+  readonly id: string;
+  readonly realm: typeof P1_REALM_ID;
+}
+
+export interface EntityCreateRequest extends MutationRequestEnvelope {
+  readonly type: "entity.create";
+  readonly body: { readonly entity: P1SharedEntityInput };
+}
+
+export interface EntityDeleteRequest extends MutationRequestEnvelope {
+  readonly type: "entity.delete";
+  readonly body: { readonly entityId: string };
+}
+
+export interface ComponentSetRequest extends MutationRequestEnvelope {
+  readonly type: "component.set";
+  readonly body: {
+    readonly entityId: string;
+    readonly component: P1MutableComponent | "hvtp.renderable@1" | "hvtp.presence@1";
+    readonly authorityEpoch: number;
+    readonly baseRevision: number;
+    readonly state: unknown;
+  };
+}
+
+export interface ComponentPatchRequest extends MutationRequestEnvelope {
+  readonly type: "component.patch";
+  readonly body: {
+    readonly entityId: string;
+    readonly component: P1MutableComponent | "hvtp.renderable@1" | "hvtp.presence@1";
+    readonly authorityEpoch: number;
+    readonly baseRevision: number;
+    readonly patch: unknown;
+  };
+}
+
+export type P1MutationRequest = EntityCreateRequest | EntityDeleteRequest | ComponentSetRequest | ComponentPatchRequest;
+
+export interface MutationAckMessage {
+  readonly hvtp: typeof HVTP_VERSION;
+  readonly id: string;
+  readonly type: "ack";
+  readonly realm: typeof P1_REALM_ID;
+  readonly realmEpoch: string;
+  readonly body: {
+    readonly ref: string;
+    readonly status: "committed";
+    readonly seq: number;
+    readonly entityId: string;
+    readonly component?: P1MutableComponent;
+    readonly revision?: number;
+    readonly authorityEpoch?: 1;
+  };
+}
+
+export type CanonicalPublicationMessage =
+  | {
+      readonly hvtp: typeof HVTP_VERSION;
+      readonly id: string;
+      readonly type: "entity.created";
+      readonly realm: typeof P1_REALM_ID;
+      readonly realmEpoch: string;
+      readonly seq: number;
+      readonly body: { readonly subscriptionId: string; readonly entity: P1SharedEntity };
+    }
+  | {
+      readonly hvtp: typeof HVTP_VERSION;
+      readonly id: string;
+      readonly type: "component.updated";
+      readonly realm: typeof P1_REALM_ID;
+      readonly realmEpoch: string;
+      readonly seq: number;
+      readonly body: {
+        readonly subscriptionId: string;
+        readonly entityId: string;
+        readonly component: P1MutableComponent;
+        readonly value: P1SharedEntity["components"][P1MutableComponent];
+      };
+    }
+  | {
+      readonly hvtp: typeof HVTP_VERSION;
+      readonly id: string;
+      readonly type: "entity.deleted";
+      readonly realm: typeof P1_REALM_ID;
+      readonly realmEpoch: string;
+      readonly seq: number;
+      readonly body: { readonly subscriptionId: string; readonly entityId: string };
+    }
+  | {
+      readonly hvtp: typeof HVTP_VERSION;
+      readonly id: string;
+      readonly type: "view.entity.enter";
+      readonly realm: typeof P1_REALM_ID;
+      readonly realmEpoch: string;
+      readonly seq: number;
+      readonly body: { readonly subscriptionId: string; readonly reason: "interest"; readonly entity: P1SharedEntity };
+    }
+  | {
+      readonly hvtp: typeof HVTP_VERSION;
+      readonly id: string;
+      readonly type: "view.entity.leave";
+      readonly realm: typeof P1_REALM_ID;
+      readonly realmEpoch: string;
+      readonly seq: number;
+      readonly body: { readonly subscriptionId: string; readonly reason: "interest"; readonly entityId: string };
+    };
+
 export interface SessionWelcomeMessage {
   readonly hvtp: typeof HVTP_VERSION;
   readonly id: string;
@@ -115,6 +226,10 @@ export interface ErrorMessage {
     readonly ref: string | null;
     readonly code: P1ErrorCode;
     readonly message: string;
+    readonly entityId?: string;
+    readonly component?: string;
+    readonly currentRevision?: number;
+    readonly authorityEpoch?: number;
   };
 }
 
@@ -230,10 +345,12 @@ export type SessionServerMessage =
   | RealmJoinedMessage
   | RealmSnapshotBeginMessage
   | EntitySnapshotMessage
-  | RealmSnapshotEndMessage;
+  | RealmSnapshotEndMessage
+  | MutationAckMessage
+  | CanonicalPublicationMessage;
 
 export type ParseResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: P1ProtocolError };
 
-export { parseJsonRequest, parseRealmJoin, parseSessionHello } from "./validation.js";
+export { parseJsonRequest, parseMutationRequest, parseRealmJoin, parseSessionHello } from "./validation.js";

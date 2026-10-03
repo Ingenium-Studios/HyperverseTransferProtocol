@@ -163,3 +163,29 @@ test("failed mutations roll back without advancing sequence", () => {
     store.close();
   }
 });
+
+test("fault injection before commit rolls back component replacement and deletion", () => {
+  let fail = false;
+  const store = new P1WorldStore(":memory:", { beforeCommit: () => { if (fail) throw new Error("injected commit failure"); } });
+  try {
+    store.createEntity(cube("entity:atomic", 0));
+    fail = true;
+    assert.throws(
+      () => store.replaceMutableComponent("entity:atomic", "hvtp.material@1", { baseColor: [0, 0, 0, 1] }, 1, 1),
+      (error) => error instanceof P1StoreError && error.code === "resource_limit",
+    );
+    assert.equal(store.getRealmSeq(), 1);
+    assert.equal(store.getEntity("entity:atomic")?.components["hvtp.material@1"].revision, 1);
+    assert.deepEqual(store.getEntity("entity:atomic")?.components["hvtp.material@1"].state.baseColor, [1, 1, 1, 1]);
+
+    assert.throws(
+      () => store.deleteEntity("entity:atomic"),
+      (error) => error instanceof P1StoreError && error.code === "resource_limit",
+    );
+    assert.equal(store.getRealmSeq(), 1);
+    assert.equal(store.getEntity("entity:atomic")?.id, "entity:atomic");
+    assert.equal(store.isTombstoned("entity:atomic"), false);
+  } finally {
+    store.close();
+  }
+});

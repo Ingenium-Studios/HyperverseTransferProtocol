@@ -5,6 +5,8 @@ import {
   P1_REALM_ID,
   P1_REQUIRED_COMPONENTS,
   type P1ErrorCode,
+  type P1MutationRequest,
+  type P1SharedEntityInput,
   type ParseResult,
   type ParticipantKind,
   type RealmJoinRequest,
@@ -142,6 +144,107 @@ export function parseRealmJoin(text: string): ParseResult<RealmJoinRequest> {
       },
     },
   };
+}
+
+export function parseMutationRequest(text: string): ParseResult<P1MutationRequest> {
+  const parsed = parseJsonRequest(text);
+  if (!parsed.ok) return parsed;
+  const request = parsed.value;
+  const ref = request.id as string;
+  if (!hasOnlyKeys(request, ["hvtp", "id", "type", "realm", "body"])) {
+    return failure("invalid_message", ref, "Mutation request contains unsupported top-level fields.");
+  }
+  if (request.hvtp !== HVTP_VERSION) return failure("unsupported_version", ref, "Only HVTP 0.2 is supported by P1.");
+  if (request.realm !== P1_REALM_ID) return failure("realm_not_found", ref, "P1 exposes only the prototype realm.");
+  if (!isObject(request.body)) return failure("invalid_message", ref, "Mutation request body must be an object.");
+
+  if (request.type === "entity.create") {
+    if (!hasOnlyKeys(request.body, ["entity"]) || !isObject(request.body.entity)) {
+      return failure("invalid_message", ref, "entity.create body must contain exactly entity.");
+    }
+    const entity = request.body.entity;
+    if (!hasOnlyKeys(entity, ["id", "components"]) || !validOpaqueId(entity.id) || !isObject(entity.components)) {
+      return failure("invalid_message", ref, "entity.create entity has an invalid closed shape.");
+    }
+    const components = entity.components;
+    if (!hasOnlyKeys(components, ["hvtp.transform@1", "hvtp.renderable@1", "hvtp.material@1"])) {
+      return failure("invalid_message", ref, "entity.create requires exactly the P1 transform, renderable, and material components.");
+    }
+    const transform = parseInputComponent(components["hvtp.transform@1"], "transform", ref);
+    if (!transform.ok) return transform;
+    const renderable = parseInputComponent(components["hvtp.renderable@1"], "renderable", ref);
+    if (!renderable.ok) return renderable;
+    const material = parseInputComponent(components["hvtp.material@1"], "material", ref);
+    if (!material.ok) return material;
+    return success({
+      ...request,
+      type: "entity.create",
+      body: {
+        entity: {
+          id: entity.id,
+          transform: transform.value as unknown as P1SharedEntityInput["transform"],
+          renderable: renderable.value as unknown as P1SharedEntityInput["renderable"],
+          material: material.value as unknown as P1SharedEntityInput["material"],
+        },
+      },
+    } as P1MutationRequest);
+  }
+
+  if (request.type === "entity.delete") {
+    if (!hasOnlyKeys(request.body, ["entityId"]) || !validOpaqueId(request.body.entityId)) {
+      return failure("invalid_message", ref, "entity.delete body must contain a valid entityId.");
+    }
+    return success({ ...request, type: "entity.delete" } as P1MutationRequest);
+  }
+
+  if (request.type === "component.set" || request.type === "component.patch") {
+    const property = request.type === "component.set" ? "state" : "patch";
+    if (!hasOnlyKeys(request.body, ["entityId", "component", "authorityEpoch", "baseRevision", property])) {
+      return failure("invalid_message", ref, `${request.type} body has an invalid closed shape.`);
+    }
+    const { entityId, component, authorityEpoch, baseRevision } = request.body;
+    if (!validOpaqueId(entityId) || typeof component !== "string") {
+      return failure("invalid_message", ref, `${request.type} entityId/component is invalid.`);
+    }
+    if (!Number.isSafeInteger(authorityEpoch) || (authorityEpoch as number) < 1 ||
+        !Number.isSafeInteger(baseRevision) || (baseRevision as number) < 1) {
+      return failure("invalid_message", ref, "authorityEpoch and baseRevision must be positive safe integers.");
+    }
+    if (!["hvtp.transform@1", "hvtp.material@1", "hvtp.renderable@1", "hvtp.presence@1"].includes(component)) {
+      return failure("unsupported_component", ref, `Unsupported component: ${component}`);
+    }
+    const body = { entityId, component, authorityEpoch, baseRevision, [property]: request.body[property] };
+    return success({ ...request, type: request.type, body } as P1MutationRequest);
+  }
+
+  return failure("invalid_message", ref, "Expected a P1 state-changing request.");
+}
+
+function parseInputComponent(
+  value: unknown,
+  name: "transform" | "renderable" | "material",
+  ref: string,
+): ParseResult<Record<string, unknown>> {
+  if (!isObject(value) || !hasOnlyKeys(value, ["state"])) {
+    return failure("invalid_message", ref, `${name} component input must contain exactly state.`);
+  }
+  if (!isObject(value.state)) return failure("invalid_component_state", ref, `${name} state must be an object.`);
+  const allowed = name === "transform"
+    ? ["position", "rotation", "scale"]
+    : name === "renderable"
+      ? ["asset", "node", "visible"]
+      : ["baseColor"];
+  const fieldsValid = name === "renderable"
+    ? hasNoUnknownKeys(value.state, allowed) && allowed.every((key) => Object.hasOwn(value.state!, key))
+    : hasOnlyKeys(value.state, allowed);
+  if (!fieldsValid) {
+    return failure("invalid_component_state", ref, `${name} state contains missing or unsupported fields.`);
+  }
+  return success(value.state);
+}
+
+function success<T>(value: T): ParseResult<T> {
+  return { ok: true, value };
 }
 
 function parseSubscriptionSelector(value: unknown, ref: string): ParseResult<SubscriptionSelector> {
