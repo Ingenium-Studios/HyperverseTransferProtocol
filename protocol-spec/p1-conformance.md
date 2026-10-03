@@ -635,9 +635,31 @@ Submit each of the following independently:
 
 Reject with `invalid_message` (or `unsupported_message` only when the message `type` itself is unknown).
 
+Error correlation follows §14.17:
+
+- if the rejected object contains exactly one valid top-level request ID, `error.body.ref` MUST equal that ID;
+- if no unique valid request ID is available, `error.body.ref` MUST be `null`.
+
 No partial state mutation occurs.
 
 Positive shape checks MUST also accept `SubscriptionSelector` as `{}`, explicit-entity-only, spatial-only, and both-fields forms; reject missing fields that are actually required by the corresponding message subsection.
+
+Explicit correlation fixture:
+
+```json
+{
+  "hvtp": "0.2",
+  "id": "b4448cc1-04ed-4e8f-bcc5-20a4df4b7d19",
+  "type": "entity.delete",
+  "realm": "urn:hvtp:realm:prototype-world",
+  "body": {
+    "entityId": "entity:example"
+  },
+  "unexpected": true
+}
+```
+
+Required: `invalid_message`, `body.ref: "b4448cc1-04ed-4e8f-bcc5-20a4df4b7d19"`, and no mutation.
 
 ---
 
@@ -832,6 +854,7 @@ Required:
 - case 2 is accepted by the UTF-8 layer; fragmentation alone MUST NOT make it invalid;
 - cases 3–4 use `invalid_json` with `body.ref: null` if the host sends an application error;
 - cases 5–6 use `invalid_message` with `body.ref: null`;
+- a syntactically valid invalid-shape request object that carries exactly one valid top-level request ID uses `invalid_message` with that ID in `body.ref`, as asserted in C25;
 - case 7 reaches component validation and returns `invalid_component_state` with the parsed request ID;
 - rejected hello remains `CONNECTED`;
 - rejected join remains `NEGOTIATED`;
