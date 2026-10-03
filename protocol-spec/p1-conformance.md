@@ -259,14 +259,18 @@ A sends mutating request ID `req-77`. The host commits it and caches the termina
 
 The response is delayed or ignored by the test client.
 
-### Action
+### Actions
 
-Within the same session, A resends the semantically identical request with ID `req-77`.
+Run both variants:
+
+1. resend the structurally identical `req-77` while the first operation is still pending;
+2. resend it again after the terminal result has been cached.
 
 ### Required results
 
-- host returns the previously cached terminal result;
-- no second world mutation occurs;
+- the in-flight retry attaches to the same logical operation and receives the same eventual terminal result;
+- the completed retry returns the cached terminal result;
+- no second world mutation occurs in either case;
 - component revision and realm sequence do not advance again.
 
 ---
@@ -392,7 +396,7 @@ The creation request includes `hvtp.renderable@1` referencing:
 /assets/p1/unit-cube.gltf
 ```
 
-The host rejects an arbitrary remote asset URI with `not_authorized`, `invalid_component_state`, or `resource_limit` as appropriate.
+The host rejects an otherwise well-formed asset URI other than `/assets/p1/unit-cube.gltf` with `invalid_component_state`. URI/message size violations use `resource_limit`.
 
 A client MUST NOT infer cube geometry from the entity ID, display name, or test case.
 
@@ -613,12 +617,34 @@ Revision 5 remains canonical and the realm sequence does not advance.
 
 ---
 
+## C27 — Immutable renderable and presence components
+
+### Setup
+
+A shared non-presence entity exists with valid renderable state. Participant A also has its host-created presence entity.
+
+### Actions
+
+A attempts:
+
+- `component.set` or `component.patch` against the shared entity's `hvtp.renderable@1`;
+- `component.set` or `component.patch` against any `hvtp.presence@1`;
+- `component.set` or `component.patch` against any presence entity transform.
+
+### Required results
+
+All requests are rejected with `not_authorized` or `presence_binding_violation` according to the target.
+
+No component revision or realm sequence advances.
+
+---
+
 ## Minimum pass criterion
 
 P1 is implementation-ready only when:
 
 - the happy path in Prototype Profile §16 passes;
-- C01–C26 pass;
+- C01–C27 pass;
 - no test relies on renderer-private messages/state;
 - a clean restart preserves durable world state;
 - an independently implemented consumer demonstrates the same wire meaning.
