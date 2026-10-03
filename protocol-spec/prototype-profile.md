@@ -507,7 +507,7 @@ P1 uses one checked-in conformance asset:
 protocol-spec/fixtures/unit-cube.gltf
 ```
 
-The reference host MUST advertise an absolute HTTPS `assetBaseUri` ending in `/` during `session.welcome`, for example:
+The reference host MUST advertise an absolute HTTP(S) `assetBaseUri` ending in `/` during `session.welcome`. HTTPS is REQUIRED outside loopback/local development. For example:
 
 ```text
 https://realm.example/assets/p1/
@@ -577,7 +577,7 @@ P1 deliberately uses a closed wire shape:
 - `subscription.set.body` uses that same selector shape directly;
 - an empty selector object `{}` is valid and requests no subscribed world entities beyond the participant's own presence.
 
-If bytes cannot be parsed as one unique valid UTF-8 JSON request object with a unique valid `id`, the host MAY send an uncorrelated `error` with `body.ref: null` and then continue or close according to the error/resource condition. Oversized messages and unrecoverable UTF-8/JSON framing errors MAY be closed without a response.
+If bytes cannot be parsed as one valid UTF-8 JSON request object, the host MAY send an uncorrelated `error` with `body.ref: null` and `code: "invalid_json"`, then continue or close according to the error/resource condition. If JSON parses but no unique valid request `id` exists (including decoded duplicate IDs), use `code: "invalid_message"` with `body.ref: null`. Oversized messages and unrecoverable UTF-8/JSON framing errors MAY be closed without a response.
 
 Literal tokens such as `NaN` and `Infinity` are invalid JSON. A syntactically valid numeric token that decodes outside the finite P1 numeric domain (for example an implementation decoding `1e400` as infinity) is rejected by the relevant message/component validator.
 
@@ -1185,6 +1185,7 @@ P1 error codes MUST include:
 - `unsupported_message`;
 - `realm_not_found`;
 - `invalid_state`;
+- `invalid_json`;
 - `invalid_message`;
 - `invalid_component_state`;
 - `not_authorized`;
