@@ -31,8 +31,10 @@ The examples below use abbreviated payloads where the surrounding profile alread
 ### Required results
 
 - creator receives committed `ack`;
-- B receives `entity.created` with a full materializable entity;
-- both accepted mutations advance exactly one component revision each;
+- B receives exactly one `entity.created` with a full materializable entity and no additional `view.entity.enter` for that creation;
+- creation advances realm `seq` once; each later accepted component mutation advances realm `seq` once;
+- both accepted component mutations advance exactly one component revision each;
+- mutating transform does not change renderable/material revisions or state, and mutating material does not change transform/renderable revisions or state;
 - canonical subscriber publications contain full resulting component envelopes;
 - after restart the entity, transform, material, and component revisions match the last durable state;
 - the new host process uses a new `realmEpoch`.
@@ -69,7 +71,7 @@ The other request MUST receive:
 {
   "type": "error",
   "body": {
-    "code": "stale_revision",
+    "code": "revision_mismatch",
     "currentRevision": 6,
     "authorityEpoch": 1
   }
@@ -78,9 +80,13 @@ The other request MUST receive:
 
 There MUST NOT be silent last-writer-wins behaviour.
 
+Repeat with `baseRevision: 6` while current revision is 5: it is also rejected with `revision_mismatch`. A request with a negative, fractional, string, or value above `2^53-1` is rejected as `invalid_message`.
+
+Concurrent valid updates to different components may both commit independently, each advancing only its own component revision and the realm sequence once. An update racing a successful global deletion must serialize so exactly one operation observes an existing entity; the loser receives the appropriate `entity_not_found` or revision error without resurrecting state.
+
 ---
 
-## C03 — Stale authority epoch is never mergeable
+## C03 — Authority epoch must match exactly
 
 ### Setup
 
@@ -91,20 +97,21 @@ revision = 9
 authorityEpoch = 3
 ```
 
-### Action
+### Actions
 
-A client submits a mutation carrying `authorityEpoch: 2`, regardless of its base revision.
+Run mutations carrying `authorityEpoch: 2`, `authorityEpoch: 4`, and invalid-domain epoch values.
 
-### Required result
+### Required results
 
-Reject with:
+Epochs 2 and 4 are rejected with:
 
 ```text
-stale_authority_epoch
+authority_epoch_mismatch
 ```
 
-The request MUST NOT be accepted because a component or future extension supports mergeable state.
+Negative, zero, fractional, string, or values above `2^53-1` are rejected as `invalid_message`.
 
+No mismatch may be accepted because a component or future extension supports mergeable state.
 ---
 
 ## C04 — Entity enters spatial interest
@@ -253,48 +260,44 @@ The client MUST NOT interpret missing 301/302 as packet loss or request a resync
 
 ## C10 — Duplicate request, same content
 
-### Setup
+Run two independent variants.
 
-A sends mutating request ID `req-77`. The host commits it and caches the terminal result for A's session.
+### Variant A — duplicate while pending
 
-The response is delayed or ignored by the test client.
+Use a deterministic processing/commit barrier so request `req-77` is admitted but not yet terminal. Resend structurally equal parsed JSON using the same ID, including reordered object keys.
 
-### Actions
+Required:
 
-Run both variants:
+- both transmissions refer to one logical operation;
+- no unbounded waiter is allocated per retransmission;
+- exactly one mutation executes;
+- the eventual terminal result is the same logical result.
 
-1. resend the structurally identical `req-77` while the first operation is still pending;
-2. resend it again after the terminal result has been cached.
+### Variant B — duplicate after completion
 
-### Required results
+Let `req-77` complete and cache its terminal result, then resend structurally equal parsed JSON with the same ID.
 
-- the in-flight retry attaches to the same logical operation and receives the same eventual terminal result;
-- the completed retry returns the cached terminal result;
-- no second world mutation occurs in either case;
-- component revision and realm sequence do not advance again.
+Required:
 
+- the cached terminal result is returned;
+- no world mutation is re-executed;
+- component revision and realm sequence do not advance again;
+- cached retry handling does not rebroadcast historical `component.updated`, `entity.created`, `entity.deleted`, `view.entity.enter`, or `view.entity.leave` messages.
+
+Repeat Variant B for a cached terminal error: the same error is returned without reprocessing the operation.
 ---
 
 ## C11 — Duplicate request ID, different content
 
-### Setup
+Run two variants: reuse `req-88` with different parsed request content while the original request is still pending, and reuse it after the original request has a cached terminal result.
 
-Request ID `req-88` already has a terminal result in the current session.
-
-### Action
-
-The same session reuses `req-88` with different semantic request content.
-
-### Required result
-
-Reject with:
+Both retries are rejected with:
 
 ```text
 request_id_conflict
 ```
 
-No world mutation occurs.
-
+The original request continues to its own unchanged terminal outcome. No second world mutation occurs.
 ---
 
 ## C12 — Lost reply across reconnect is explicitly uncertain
@@ -350,11 +353,13 @@ A attempts any of the following:
 - create a new entity containing `hvtp.presence@1` bound to B;
 - set/patch B's `hvtp.presence@1`;
 - set/patch B's presence transform;
-- set/patch A's own presence transform.
+- set/patch A's own presence transform;
+- globally delete A's own presence entity;
+- globally delete B's presence entity.
 
 Each request MUST be rejected with `not_authorized` or `presence_binding_violation`.
 
-P1 presence state is static host-managed session state. Neither A nor B may mutate it.
+P1 presence state is static host-managed session state. Neither A nor B may mutate/delete it. When B disconnects, B's presence is removed as session state without a persistent tombstone or realm-sequence mutation, and A never receives B's private presence state.
 
 ---
 
@@ -390,30 +395,42 @@ A creates the happy-path cube.
 
 ### Required result
 
-The creation request includes `hvtp.renderable@1` referencing:
+The creation request includes `hvtp.renderable@1` with exactly:
 
-```text
-/assets/p1/unit-cube.gltf
+```json
+{
+  "asset": {
+    "uri": "unit-cube.gltf",
+    "mediaType": "model/gltf+json"
+  },
+  "node": "UnitCube",
+  "visible": true
+}
 ```
 
-The host rejects an otherwise well-formed asset URI other than `/assets/p1/unit-cube.gltf` with `invalid_component_state`. URI/message size violations use `resource_limit`.
+The host rejects any other URI, media type, or node name with `invalid_component_state`; `visible` must be a JSON boolean. URI/message size violations use `resource_limit`.
+
+The client resolves `unit-cube.gltf` against `session.welcome.assetBaseUri`, does not follow redirects, enforces `maxAssetBytes`, and uses a local-only placeholder on fetch/validation failure without mutating shared state.
 
 A client MUST NOT infer cube geometry from the entity ID, display name, or test case.
-
 ---
 
-## C17 — Invalid transform interpretation
+## C17 — Transform validation and interpretation
 
-Each of the following transform states MUST be rejected with `invalid_component_state`:
+At the byte/JSON layer, literal `NaN` or `Infinity` tokens are invalid JSON and are handled as malformed input, not component state.
 
-- NaN or Infinity encoded by a non-standard parser;
+After valid JSON parsing, each of the following transform states MUST be rejected with `invalid_component_state`:
+
+- a numeric token such as `1e400` that the implementation decodes to a non-finite value;
 - quaternion whose norm differs from 1 by more than `1e-5`;
+- wrong vector lengths/types;
 - zero or negative P1 scale;
 - scale greater than 1000;
 - position outside the P1 coordinate range.
 
-A conforming independent renderer interprets quaternion order as `[x, y, z, w]`, uses metres, right-handed coordinates, +Y up, +Z forward.
+A conforming independent renderer interprets quaternion order as `[x, y, z, w]`, uses metres, right-handed coordinates, +Y up, +Z forward, and active `T × R × S` composition after the selected glTF node hierarchy.
 
+Numerical assertion: for local point `[0.5,0.5,0.5]`, translation `[0,0,0]`, scale `[2,1,1]`, and +90° active rotation about +Z represented by quaternion approximately `[0,0,0.7071067811865475,0.7071067811865476]`, the realm point MUST be approximately `[-0.5,1.0,0.5]` within tolerance `1e-9`.
 ---
 
 ## C18 — Material interpretation
@@ -447,6 +464,10 @@ The persistence layer is fault-injected so a valid mutation cannot complete its 
 
 The exact storage engine error is not exposed as a protocol contract.
 
+Repeat fault injection for create and delete/tombstone transactions: entity state, tombstone state, component revisions, and sequence assignment must be atomic.
+
+Also test a failure after the durable commit succeeds but before ACK/publication is sent. The host MUST NOT roll back or report a false rejected state; if the client disconnects before learning the outcome, reconnect semantics from C12 apply and canonical state reveals the committed result.
+
 ---
 
 ## C20 — Restart invalidates session-scoped state
@@ -464,7 +485,9 @@ Host process restarts.
 - old connections terminate;
 - new sessions receive a new realm epoch E2 where `E2 != E1`;
 - old participant IDs, presence entities, subscriptions, and request-dedup caches are not treated as valid session state;
-- durable non-presence entities remain;
+- durable non-presence entities and durable tombstones remain;
+- a tombstoned entity ID remains non-reusable after restart;
+- in-flight old-session requests do not resume automatically in the new process/session;
 - reconnecting clients take new snapshots.
 
 ---
@@ -473,23 +496,31 @@ Host process restarts.
 
 Test at least:
 
-- JSON frame larger than advertised `maxMessageBytes`;
+- a complete reassembled WebSocket message larger than advertised `maxMessageBytes`, including a fragmented-message variant where each fragment is individually small;
 - subscription radius larger than advertised maximum;
 - too many explicit entity IDs;
 - entity serialization larger than maximum;
-- a join/subscription whose effective view would exceed `maxSnapshotEntities`;
-- mutation rate above advertised maximum;
-- filling the request-deduplication cache;
-- outbound queue exhaustion.
+- join/subscription replacement whose effective view would exceed `maxVisibleEntitiesPerConnection`;
+- a live world mutation that would grow an already-active view above `maxVisibleEntitiesPerConnection`;
+- all-request/control flooding above `maxClientRequestsPerSecond`;
+- durable mutation rate above `maxMutationRequestsPerSecond`;
+- filling `maxPendingStateChangingRequests`;
+- filling the request-deduplication table;
+- a slow snapshot/subscription consumer whose buffered catch-up would exceed `maxQueuedOutboundBytes`;
+- outbound queue exhaustion;
+- host-wide live-entity+tombstone storage reaching `maxPersistentEntityRecords`.
 
 ### Required results
 
 The host remains bounded.
 
-Where a safe response is possible, return `resource_limit`. For outbound queue exhaustion the host may close the connection.
+Where a safe response is possible, return `resource_limit`. A join/replacement rejected for view size preserves the previous/no view. If later world growth exceeds a connection's live-view cap, the host reports `resource_limit` when safe and closes that connection rather than silently dropping selected entities.
 
-The implementation MUST NOT allocate without bound to satisfy an invalid or overloaded client.
+When the persistent-record budget is full, new entity creation is rejected without mutating world state.
 
+For outbound/buffer/message conditions that prevent a safe response, the host may close the connection.
+
+The implementation MUST NOT allocate without bound to satisfy an invalid, fragmented, slow, or overloaded client.
 ---
 
 ## C22 — Read authorization precedes interest
@@ -502,7 +533,7 @@ P1 authorizes that presence entity only to B.
 
 ### Action
 
-A explicitly requests `entity:presence-b` in `subscription.set`.
+A explicitly requests `entity:presence-b` in `subscription.set`, then repeats with a combined spatial selector that would also geometrically include B's presence.
 
 ### Required result
 
@@ -533,7 +564,10 @@ The second consumer MUST agree on:
 - material RGBA values;
 - asset/node reference;
 - view-enter/view-leave meaning;
-- global deletion meaning.
+- global deletion meaning;
+- the nonuniform-scale/+90° transform assertion from C17;
+- subscription-generation ordering and stale-message rejection;
+- creation versus view-enter and deletion versus view-leave publication precedence.
 
 Sharing wire/schema definitions is allowed. Sharing Three.js adapter logic is not sufficient proof.
 
@@ -559,9 +593,13 @@ Step 1:
 
 Step 2:
 
-- B receives `entity.deleted`;
+- B receives exactly one `entity.deleted` and no `view.entity.leave` for that deletion;
 - E is globally tombstoned/deleted;
-- if A later requests a subscription that would have included E, E does not reappear.
+- deleting E again returns `entity_not_found` without sequence advance;
+- recreating E with the same entity ID returns `entity_exists`;
+- after restart the tombstone remains;
+- if A later requests a subscription that would have included E, E does not reappear;
+- replay/cached request handling does not rebroadcast the historical deletion/view transition.
 
 ---
 
@@ -572,15 +610,19 @@ Step 2:
 Submit each of the following independently:
 
 - a known P1 message with an unknown top-level/body field;
-- a JSON object containing a duplicate key;
-- a client-generated message ID longer than 128 UTF-8 bytes;
-- a participant kind other than `human` or `agent`.
+- a JSON object containing a duplicate key, including a decoded duplicate such as `"id"` and `"\u0069d"`;
+- a missing or empty client request ID;
+- a client-generated message/entity ID longer than 128 UTF-8 bytes;
+- a participant kind other than `human` or `agent`;
+- a host-publication message type sent in the client→host direction.
 
 ### Required result
 
 Reject with `invalid_message` (or `unsupported_message` only when the message `type` itself is unknown).
 
 No partial state mutation occurs.
+
+Positive shape checks MUST also accept `SubscriptionSelector` as `{}`, explicit-entity-only, spatial-only, and both-fields forms; reject missing fields that are actually required by the corresponding message subsection.
 
 ---
 
@@ -615,6 +657,8 @@ The host applies RFC 7396 semantics conceptually, validates the resulting full t
 
 Revision 5 remains canonical and the realm sequence does not advance.
 
+Also reject empty patch objects, non-object patches, wrong vector lengths/types, and unknown patch fields. Every rejected patch preserves the complete prior component state atomically.
+
 ---
 
 ## C27 — Immutable renderable and presence components
@@ -635,18 +679,194 @@ A attempts:
 
 All requests are rejected with `not_authorized` or `presence_binding_violation` according to the target.
 
-No component revision or realm sequence advances.
+No component revision or realm sequence advances, and no session presence state changes.
+
+---
+
+## C28 — Overlapping subscription replacements serialize by generation
+
+### Setup
+
+Initial subscription S0 includes E. Prepare two accepted replacement requests on the same connection:
+
+- S1 excludes E;
+- S2 includes E.
+
+### Required results
+
+- the host processes replacements serially per connection;
+- S1's `subscription.applied` + transition batch completes before S2's batch begins;
+- after S2 applies, the active generation is S2 and E is present;
+- subscriber-scoped messages carry their `subscriptionId`;
+- a deliberately delayed message tagged with S1 after S2 is active is ignored by the client;
+- two legitimate messages sharing the same realm `seq` are not treated as duplicates merely because the sequence is equal.
+
+Repeat with a pre-boundary canonical publication already queued before S1: it is delivered before `subscription.applied(S1)`.
+
+A cached retry of either `subscription.set` returns cached `subscription.applied` but does not replay historical enter/leave publications.
+
+---
+
+## C29 — Spatial membership predicate is transform-origin Euclidean distance
+
+Use spatial center `[0,0,0]` and radius 100.
+
+Required:
+
+- `[100,0,0]` is selected;
+- `[100.000001,0,0]` is not;
+- `[0,100,0]` and `[0,0,100]` are selected;
+- `[60,80,0]` is selected;
+- huge/nonuniform scale does not change membership;
+- `renderable.visible: false` does not change membership;
+- asset geometry/bounds are never used;
+- radius 0 selects an entity exactly at the center;
+- malformed center lengths, nonfinite values, negative radius, or radius above the advertised maximum are rejected.
+
+---
+
+## C30 — Snapshot metadata and mutation kinds are complete
+
+For every snapshot, `realm.joined`, `realm.snapshot.begin`, every `entity.snapshot`, and `realm.snapshot.end` agree on `realmEpoch`, `snapshotId`, and `snapshotBaseSeq`. `entityCount` equals the number of entity records.
+
+A mismatched/missing snapshot identifier or base sequence causes the client to discard/reject the snapshot rather than partially activate it.
+
+Repeat C08 with each post-cut event:
+
+- existing component update;
+- entity creation;
+- global deletion;
+- existing entity crossing spatial membership.
+
+Each change is buffered and applied exactly once after `realm.snapshot.end` using the correct publication kind.
+
+---
+
+## C31 — Request-table admission and subscription retries
+
+Fill `maxRequestDedupEntries` with admitted pending/cached state-changing IDs.
+
+For a new ID R:
+
+- existing-ID lookup happens before capacity rejection;
+- R receives `resource_limit` and is not reserved/cached;
+- retrying R while full may receive `resource_limit` again;
+- after capacity becomes available, R may be admitted as a new logical request.
+
+For `subscription.set` retries:
+
+- same-content pending retry is one logical operation;
+- different-content same-ID retry returns `request_id_conflict`;
+- completion produces one logical `subscription.applied` result;
+- completed retry returns cached `subscription.applied`;
+- cached retry never repeats historical enter/leave messages.
+
+---
+
+## C32 — Revision/epoch domains and no-op mutation
+
+For a component at revision 5 / authority epoch 1:
+
+- revision 5 + epoch 1 is eligible;
+- revision 4 or 6 returns `revision_mismatch`;
+- epoch below or above 1 returns `authority_epoch_mismatch`;
+- zero/negative/fractional/string/out-of-range metadata is `invalid_message`.
+
+Submit a valid `component.set` whose resulting state equals current state.
+
+Required: it advances revision exactly once and realm `seq` exactly once; same-session retry does not advance them again.
+
+---
+
+## C33 — Malformed and uncorrelated errors
+
+Send exact wire inputs:
+
+1. truncated JSON `{`;
+2. literal `NaN` / `Infinity` token;
+3. duplicate decoded request-ID keys such that no unique valid ID exists;
+4. valid JSON with `1e400` in a transform field that decodes outside the finite component domain.
+
+Required:
+
+- cases 1–3 use malformed/invalid-message handling and, if an error is sent, `body.ref: null`; permitted close behavior is acceptable;
+- case 4 reaches component validation and returns `invalid_component_state` with the parsed request ID;
+- rejected hello remains `CONNECTED`;
+- rejected join remains `NEGOTIATED`;
+- rejected joined-state mutation remains `JOINED` unless an explicit close rule applies.
+
+---
+
+## C34 — Asset base resolution and load failure are renderer-local
+
+`session.welcome` advertises e.g. `https://realm.example/assets/p1/`.
+
+Required:
+
+- browser and headless clients resolve `unit-cube.gltf` to the same URL regardless of document origin;
+- redirects are not followed;
+- wrong URI, media type, or node name is invalid component state;
+- non-boolean `visible` is invalid component state;
+- oversized asset is a local load failure;
+- fetch failure causes only local placeholder/error presentation, never shared mutation;
+- `visible: false` remains valid and does not affect spatial subscription membership.
+
+---
+
+## C35 — Creation/deletion publication precedence
+
+Create an entity visible to A and invisible to B.
+
+Required: A receives exactly one `entity.created` with active `subscriptionId` and no `view.entity.enter`; B receives neither.
+
+Then delete an entity visible to A and invisible to B.
+
+Required: A receives exactly one `entity.deleted` with active `subscriptionId` and no `view.entity.leave`; B receives neither.
+
+Deleting again returns `entity_not_found` without realm-sequence advancement.
+
+---
+
+## C36 — Live-view overflow is explicit
+
+A connection already has exactly `maxVisibleEntitiesPerConnection` selected entities. Another participant creates/moves one more entity into that effective view.
+
+Required:
+
+- the realm mutation may commit;
+- the affected connection is not silently given a partial view;
+- host sends `resource_limit` when safe and closes the affected connection;
+- reconnecting with the same too-broad selector is rejected until narrowed.
+
+---
+
+## C37 — Independent transform/lifecycle trace
+
+The independent consumer receives a captured trace including:
+
+- nonuniform `scale: [2,1,1]`;
+- +90° active quaternion rotation about +Z;
+- a subscription transition with a stale old-generation message injected afterwards;
+- creation, ordinary update, view leave/re-enter, and global deletion.
+
+It MUST produce C17's numerical transform result and exact lifecycle/publication outcomes without using Three.js adapter logic.
 
 ---
 
 ## Minimum pass criterion
 
-P1 is implementation-ready only when:
+**P1 Reference Implementation Complete** requires:
 
-- the happy path in Prototype Profile §16 passes;
-- C01–C27 pass;
+- the happy path in Prototype Profile `16 passes;
+- C01–C22 and C24–C36 pass for the reference host/clients;
 - no test relies on renderer-private messages/state;
-- a clean restart preserves durable world state;
-- an independently implemented consumer demonstrates the same wire meaning.
+- a clean restart preserves durable world state.
+
+**P1 Interoperability Accepted** additionally requires:
+
+- C23 and C37 pass with an independently implemented consumer;
+- the independent consumer demonstrates the same numeric transform and lifecycle/wire meaning.
+
+Only the second gate is sufficient to freeze P1 as an interoperability profile.
 
 Failures should be fixed in the smallest relevant protocol/profile layer rather than by adding new platform-specific side channels.
