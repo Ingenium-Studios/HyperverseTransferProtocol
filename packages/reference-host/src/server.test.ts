@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 import test from "node:test";
 import WebSocket, { type RawData } from "ws";
 import { createReferenceHost, type ReferenceHost } from "./server.js";
@@ -33,7 +36,7 @@ const join = JSON.stringify({
 });
 
 test("reference host negotiates hello over WebSocket", async () => {
-  const host = await createReferenceHost();
+  const host = await createReferenceHost({ databasePath: ":memory:" });
   try {
     const socket = await connect(host);
     const [response] = await sendAndCollect(socket, hello, 1);
@@ -47,7 +50,7 @@ test("reference host negotiates hello over WebSocket", async () => {
 });
 
 test("reference host enqueues the initial presence snapshot in protocol order", async () => {
-  const host = await createReferenceHost();
+  const host = await createReferenceHost({ databasePath: ":memory:" });
   try {
     const socket = await connect(host);
     const [welcome] = await sendAndCollect(socket, hello, 1);
@@ -100,7 +103,7 @@ test("reference host enqueues the initial presence snapshot in protocol order", 
 });
 
 test("reference host serves the checked-in P1 unit cube fixture", async () => {
-  const host = await createReferenceHost();
+  const host = await createReferenceHost({ databasePath: ":memory:" });
   try {
     const response = await fetch(`http://${host.host}:${host.port}/assets/p1/unit-cube.gltf`, {
       redirect: "manual",
@@ -154,3 +157,109 @@ async function sendAndCollect(
   });
   return messages;
 }
+
+
+test("reference host recovers durable shared state into a fresh epoch snapshot", async () => {
+  const dir = mkdtempSync(joinPath(tmpdir(), "hvtp-host-restart-"));
+  const databasePath = joinPath(dir, "world.sqlite");
+  let first: ReferenceHost | null = null;
+  let second: ReferenceHost | null = null;
+
+  try {
+    first = await createReferenceHost({ databasePath });
+    const firstEpoch = first.realmEpoch;
+
+    first.worldStore.createEntity({
+      id: "entity:persisted-cube",
+      transform: {
+        position: [10, 0.5, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+      },
+      renderable: {
+        asset: { uri: "unit-cube.gltf", mediaType: "model/gltf+json" },
+        node: "UnitCube",
+        visible: true,
+      },
+      material: { baseColor: [1, 1, 1, 1] },
+    });
+    first.worldStore.replaceMutableComponent(
+      "entity:persisted-cube",
+      "hvtp.material@1",
+      { baseColor: [0.25, 0.5, 0.75, 1] },
+      1,
+      1,
+    );
+    assert.equal(first.worldStore.getRealmSeq(), 2);
+
+    await first.close();
+    first = null;
+
+    second = await createReferenceHost({ databasePath });
+    assert.notEqual(second.realmEpoch, firstEpoch);
+    assert.equal(second.worldStore.getRealmSeq(), 0);
+
+    const socket = await connect(second);
+    const [welcome] = await sendAndCollect(socket, hello, 1);
+    assert.equal(welcome?.type, "session.welcome");
+
+    const subscribedJoin = JSON.stringify({
+      hvtp: "0.2",
+      id: "req-restart-join",
+      type: "realm.join",
+      body: {
+        realm: "urn:hvtp:realm:prototype-world",
+        subscription: {
+          spatial: { center: [0, 0, 0], radius: 100 },
+        },
+      },
+    });
+
+    const messages = await sendAndCollect(socket, subscribedJoin, 5);
+    assert.deepEqual(messages.map((message) => message.type), [
+      "realm.joined",
+      "realm.snapshot.begin",
+      "entity.snapshot",
+      "entity.snapshot",
+      "realm.snapshot.end",
+    ]);
+
+    const joined = messages[0]!;
+    const end = messages[4]!;
+    const joinedBody = joined.body as Record<string, unknown>;
+    const endBody = end.body as Record<string, unknown>;
+    assert.equal(joined.realmEpoch, second.realmEpoch);
+    assert.equal(joinedBody.snapshotBaseSeq, 0);
+    assert.equal(endBody.snapshotBaseSeq, 0);
+    assert.equal(endBody.entityCount, 2);
+
+    const entityMessages = messages.filter((message) => message.type === "entity.snapshot");
+    const entities = entityMessages.map(
+      (message) => ((message.body as Record<string, unknown>).entity as {
+        id: string;
+        components: Record<string, {
+          revision: number;
+          state: Record<string, unknown>;
+        }>;
+      }),
+    );
+
+    const persisted = entities.find((entity) => entity.id === "entity:persisted-cube");
+    assert.ok(persisted);
+    assert.equal(persisted.components["hvtp.material@1"]?.revision, 2);
+    assert.deepEqual(
+      persisted.components["hvtp.material@1"]?.state.baseColor,
+      [0.25, 0.5, 0.75, 1],
+    );
+
+    const presence = entities.find((entity) => entity.id !== "entity:persisted-cube");
+    assert.ok(presence);
+    assert.ok(presence.components["hvtp.presence@1"]);
+
+    socket.close();
+  } finally {
+    if (first !== null) await first.close();
+    if (second !== null) await second.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
