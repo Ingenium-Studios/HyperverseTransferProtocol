@@ -561,12 +561,64 @@ Step 2:
 
 ---
 
+## C25 — Closed JSON shape and duplicate keys
+
+### Actions
+
+Submit each of the following independently:
+
+- a known P1 message with an unknown top-level/body field;
+- a JSON object containing a duplicate key;
+- a client-generated message ID longer than 128 UTF-8 bytes;
+- a participant kind other than `human` or `agent`.
+
+### Required result
+
+Reject with `invalid_message` (or `unsupported_message` only when the message `type` itself is unknown).
+
+No partial state mutation occurs.
+
+---
+
+## C26 — Merge Patch cannot delete required component state
+
+### Setup
+
+A shared entity has a valid transform at revision 5.
+
+### Action
+
+Submit:
+
+```json
+{
+  "type": "component.patch",
+  "body": {
+    "entityId": "entity:test",
+    "component": "hvtp.transform@1",
+    "authorityEpoch": 1,
+    "baseRevision": 5,
+    "patch": {
+      "position": null
+    }
+  }
+}
+```
+
+### Required result
+
+The host applies RFC 7396 semantics conceptually, validates the resulting full transform, and rejects the request with `invalid_component_state`.
+
+Revision 5 remains canonical and the realm sequence does not advance.
+
+---
+
 ## Minimum pass criterion
 
 P1 is implementation-ready only when:
 
 - the happy path in Prototype Profile §16 passes;
-- C01–C24 pass;
+- C01–C26 pass;
 - no test relies on renderer-private messages/state;
 - a clean restart preserves durable world state;
 - an independently implemented consumer demonstrates the same wire meaning.
