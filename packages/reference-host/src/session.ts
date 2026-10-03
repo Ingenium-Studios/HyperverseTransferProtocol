@@ -210,10 +210,12 @@ export class P1Session {
   }
 
   #error(code: P1ErrorCode, ref: string | null, message: string): ErrorMessage {
+    const realmScoped = this.#state === "JOINING" || this.#state === "JOINED";
     return {
       hvtp: HVTP_VERSION,
       id: `res:${randomUUID()}`,
       type: "error",
+      ...(realmScoped ? { realm: P1_REALM_ID, realmEpoch: this.#realmEpoch } : {}),
       body: { ref, code, message },
     };
   }
