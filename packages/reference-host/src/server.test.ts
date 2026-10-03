@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import WebSocket from "ws";
+import WebSocket, { type RawData } from "ws";
 import { createReferenceHost, type ReferenceHost } from "./server.js";
 
 const hello = JSON.stringify({
@@ -136,7 +136,7 @@ async function sendAndCollect(
 ): Promise<Array<Record<string, unknown>>> {
   const messages = await new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
     const collected: Array<Record<string, unknown>> = [];
-    const onMessage = (data: WebSocket.RawData): void => {
+    const onMessage = (data: RawData): void => {
       collected.push(JSON.parse(data.toString()) as Record<string, unknown>);
       if (collected.length === count) {
         socket.off("message", onMessage);
