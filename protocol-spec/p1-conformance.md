@@ -345,13 +345,12 @@ A attempts any of the following:
 
 - create a new entity containing `hvtp.presence@1` bound to B;
 - set/patch B's `hvtp.presence@1`;
-- set/patch B's presence transform.
+- set/patch B's presence transform;
+- set/patch A's own presence transform.
 
 Each request MUST be rejected with `not_authorized` or `presence_binding_violation`.
 
-B's presence state MUST remain unchanged.
-
-A may request a transform mutation for A's own presence.
+P1 presence state is static host-managed session state. Neither A nor B may mutate it.
 
 ---
 
@@ -474,7 +473,9 @@ Test at least:
 - subscription radius larger than advertised maximum;
 - too many explicit entity IDs;
 - entity serialization larger than maximum;
+- a join/subscription whose effective view would exceed `maxSnapshotEntities`;
 - mutation rate above advertised maximum;
+- filling the request-deduplication cache;
 - outbound queue exhaustion.
 
 ### Required results
@@ -491,17 +492,19 @@ The implementation MUST NOT allocate without bound to satisfy an invalid or over
 
 ### Setup
 
-A future/extended host marks entity S unreadable to A but A can guess its entity ID.
+Participants A and B are joined. B has host-created presence entity `entity:presence-b`.
+
+P1 authorizes that presence entity only to B.
 
 ### Action
 
-A explicitly requests S in `subscription.set`.
+A explicitly requests `entity:presence-b` in `subscription.set`.
 
 ### Required result
 
-S does not enter A's effective view.
+B's presence entity does not enter A's effective view and is omitted from any `view.entity.enter` or snapshot state delivered to A.
 
-The P1 reference realm currently exposes shared world state publicly to joined participants, but implementations MUST preserve the ordering principle:
+The required ordering is:
 
 ```text
 authorization → interest selection → delivery
