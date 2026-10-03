@@ -228,6 +228,24 @@ See [Prototype Profile P1](./protocol-spec/prototype-profile.md) and [P1 Conform
 
 ---
 
+## 🧰 Reference implementation status
+
+Implementation has started on the P1 reference stack.
+
+The first bounded slice currently provides:
+
+- an npm/TypeScript workspace rooted at `/packages`;
+- `@hvtp/protocol-types` with P1 constants, error codes, closed-shape `session.hello` validation, request-ID correlation, malformed-JSON classification, and duplicate decoded-key detection;
+- `@hvtp/reference-host` with a WebSocket/HTTP entry point, fatal UTF-8 decoding, P1 message-size enforcement, `session.hello → session.welcome` negotiation, session-state enforcement, advertised limits/asset base, and serving of the checked-in unit-cube fixture;
+- unit tests for validator/error-correlation behavior and the initial session state machine;
+- a WebSocket integration test for hello negotiation.
+
+This is **not yet a P1-conformant host**. Realm join, snapshots, entity/component state, persistence, subscriptions, mutation ordering, deduplication, and the remaining conformance cases are intentionally still unimplemented.
+
+The implementation branch is layered on top of the reviewed P1 specification rather than merging that specification PR implicitly.
+
+---
+
 ## 🔌 Planned protocol areas
 
 The current design includes or anticipates:
