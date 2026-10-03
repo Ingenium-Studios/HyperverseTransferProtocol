@@ -32,7 +32,7 @@ export interface DurableDeletion {
 
 export class P1StoreError extends Error {
   readonly code: P1ErrorCode;
-  readonly currentRevision?: number;
+  readonly currentRevision: number | undefined;
 
   constructor(code: P1ErrorCode, message: string, currentRevision?: number) {
     super(message);
