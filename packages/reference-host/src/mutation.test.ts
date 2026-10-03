@@ -97,6 +97,7 @@ test("wire validation rejects merge-patch deletion, immutable renderable, and st
     const stale = (await sendAndCollect(socket, setTransform("req-stale", "entity:validation", 2, 1), 1))[0]!;
     assert.equal((stale.body as Record<string, unknown>).code, "revision_mismatch");
     assert.equal((stale.body as Record<string, unknown>).currentRevision, 1);
+    assert.equal((stale.body as Record<string, unknown>).authorityEpoch, 1);
     assert.equal(host.worldStore.getRealmSeq(), 1);
   } finally {
     sockets.forEach((socket) => socket.close());
@@ -124,6 +125,8 @@ test("two WebSocket clients racing the same revision produce one commit and one 
     assert.equal(outcomes.filter((message) => message.type === "ack").length, 1);
     const conflict = outcomes.find((message) => message.type === "error")!;
     assert.equal((conflict.body as Record<string, unknown>).code, "revision_mismatch");
+    assert.equal((conflict.body as Record<string, unknown>).currentRevision, 2);
+    assert.equal((conflict.body as Record<string, unknown>).authorityEpoch, 1);
     assert.equal(host.worldStore.getRealmSeq(), 2);
   } finally {
     sockets.forEach((socket) => socket.close());
@@ -190,21 +193,76 @@ test("failed durable create returns error and leaves no state, tombstone, sequen
   }
 });
 
-test("response failure after commit closes the session and a fresh snapshot reveals committed state", async () => {
+test("durable creates cannot collide with this session or another active private presence ID", async () => {
+  const host = await createReferenceHost({ databasePath: ":memory:" });
+  const sockets: WebSocket[] = [];
+  try {
+    const requester = await join(host, {}, sockets);
+    const ownPresenceId = (requester as WebSocket & { presenceEntityId?: string }).presenceEntityId!;
+    const otherParticipant = await join(host, {}, sockets);
+    const otherPresenceId = (otherParticipant as WebSocket & { presenceEntityId?: string }).presenceEntityId!;
+    const observer = await join(host, { spatial: { center: [0, 0, 0], radius: 0 } }, sockets);
+    let publications = 0;
+    observer.on("message", () => { publications += 1; });
+
+    for (const [requestId, presenceId] of [["req-create-own-presence", ownPresenceId], ["req-create-other-presence", otherPresenceId]]) {
+      const result = (await sendAndCollect(requester, create(requestId!, presenceId!, 0), 1))[0]!;
+      assert.equal(result.type, "error");
+      assert.equal((result.body as Record<string, unknown>).code, "presence_binding_violation");
+      assert.equal(host.worldStore.getEntity(presenceId!), null);
+      assert.equal(host.worldStore.isTombstoned(presenceId!), false);
+      assert.equal(host.worldStore.getRealmSeq(), 0);
+    }
+    await host.realmCoordinator.drain();
+    assert.equal(publications, 0);
+    assert.equal(observer.readyState, WebSocket.OPEN);
+  } finally {
+    sockets.forEach((socket) => socket.close());
+    await host.close();
+  }
+});
+
+test("entity.create with a presence component returns an authorization error without mutation", async () => {
+  const host = await createReferenceHost({ databasePath: ":memory:" });
+  const sockets: WebSocket[] = [];
+  try {
+    const observer = await join(host, { entities: ["entity:presence-create"] }, sockets);
+    let publications = 0;
+    observer.on("message", () => { publications += 1; });
+    const requester = await join(host, {}, sockets);
+    const request = JSON.parse(create("req-presence-create", "entity:presence-create", 0)) as Record<string, any>;
+    request.body.entity.components["hvtp.presence@1"] = { state: { participantId: "participant:client", kind: "human" } };
+    const result = (await sendAndCollect(requester, JSON.stringify(request), 1))[0]!;
+    assert.equal(result.type, "error");
+    assert.equal((result.body as Record<string, unknown>).code, "presence_binding_violation");
+    assert.equal(host.worldStore.getEntity("entity:presence-create"), null);
+    assert.equal(host.worldStore.isTombstoned("entity:presence-create"), false);
+    assert.equal(host.worldStore.getRealmSeq(), 0);
+    await host.realmCoordinator.drain();
+    assert.equal(publications, 0);
+  } finally {
+    sockets.forEach((socket) => socket.close());
+    await host.close();
+  }
+});
+
+test("response failure after commit publishes canonical state, closes requester, and is confirmed by snapshot", async () => {
   const host = await createReferenceHost({ databasePath: ":memory:", afterDurableCommit: () => { throw new Error("response failure"); } });
   const sockets: WebSocket[] = [];
   try {
     const observer = await join(host, { entities: ["entity:committed"] }, sockets);
-    let publications = 0;
-    observer.on("message", () => { publications += 1; });
+    const publication = receiveOne(observer);
     const requester = await join(host, {}, sockets);
     const closed = new Promise<number>((resolve) => requester.once("close", (code) => resolve(code)));
     requester.send(create("req-response-fails", "entity:committed", 0));
     assert.equal(await closed, 1011);
     assert.equal(host.worldStore.getRealmSeq(), 1);
     assert.ok(host.worldStore.getEntity("entity:committed"));
+    const committedPublication = await publication;
+    assert.equal(committedPublication.type, "entity.created");
+    assert.equal(((committedPublication.body as Record<string, unknown>).entity as { id: string }).id, "entity:committed");
     await host.realmCoordinator.drain();
-    assert.equal(publications, 0);
+    assert.equal(observer.readyState, WebSocket.OPEN);
     const recovered = await join(host, { entities: ["entity:committed"] }, sockets);
     assert.equal(recovered.readyState, WebSocket.OPEN);
     const snapshot = (recovered as WebSocket & { snapshotMessages?: Array<Record<string, unknown>> }).snapshotMessages!;

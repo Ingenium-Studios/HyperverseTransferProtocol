@@ -163,6 +163,9 @@ export function parseMutationRequest(text: string): ParseResult<P1MutationReques
       return failure("invalid_message", ref, "entity.create body must contain exactly entity.");
     }
     const entity = request.body.entity;
+    if (isObject(entity.components) && Object.hasOwn(entity.components, "hvtp.presence@1")) {
+      return failure("presence_binding_violation", ref, "Presence components are host-managed and cannot be created by clients.");
+    }
     if (!hasOnlyKeys(entity, ["id", "components"]) || !validOpaqueId(entity.id) || !isObject(entity.components)) {
       return failure("invalid_message", ref, "entity.create entity has an invalid closed shape.");
     }

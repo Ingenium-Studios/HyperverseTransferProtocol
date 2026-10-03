@@ -253,7 +253,7 @@ The first four bounded slices currently provide:
 
 The store uses Node's built-in `node:sqlite`; Node 22.13+ exposes it without the former command-line flag, although Node 22 still labels the module experimental.
 
-This is **not yet a fully P1-conformant host**. Post-join `subscription.set`, full outbound queue/rate-limit enforcement, Three.js rendering, and conformance cases outside the completed slices remain unimplemented.
+This is **not yet a fully P1-conformant host**. Post-join `subscription.set`, dynamic `maxVisibleEntitiesPerConnection` enforcement for live-view growth after world mutations, full outbound queue/rate-limit enforcement, Three.js rendering, and conformance cases outside the completed slices remain unimplemented.
 
 The reviewed HVTP 0.2/P1 specification is now merged on `main`; implementation work continues separately in the reference implementation PR.
 

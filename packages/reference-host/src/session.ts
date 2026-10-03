@@ -367,7 +367,7 @@ export class P1Session {
             entityId,
             ...(component === undefined ? {} : { component }),
             ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }),
-            ...(error.code === "authority_epoch_mismatch" ? { authorityEpoch: 1 } : {}),
+            ...(error.code === "authority_epoch_mismatch" || error.code === "revision_mismatch" ? { authorityEpoch: 1 } : {}),
           });
         } else {
           terminal = this.#error("resource_limit", ref, "Durable world mutation could not be completed.");
@@ -382,9 +382,12 @@ export class P1Session {
     const world = this.#worldView;
     if (request.type === "entity.create") {
       if (world.createEntity === undefined) throw new P1StoreError("invalid_state", "Durable world mutations are unavailable.");
+      if (request.body.entity.id === this.#presenceEntityId || this.#realmCoordinator?.isPrivatePresenceEntity(request.body.entity.id)) {
+        throw new P1StoreError("presence_binding_violation", "Session presence entities cannot be created as durable entities.");
+      }
       const result = world.createEntity(request.body.entity);
-      this.#afterCommit();
       this.#realmCoordinator?.publish({ kind: "created", seq: result.seq, entity: result.entity });
+      this.#afterCommit();
       return this.#ack(request.id, result.seq, request.body.entity.id);
     }
     if (request.type === "entity.delete") {
@@ -397,8 +400,8 @@ export class P1Session {
       const before = world.getEntity(request.body.entityId);
       if (before === null) throw new P1StoreError("entity_not_found", "Entity does not exist.");
       const result = world.deleteEntity(request.body.entityId);
-      this.#afterCommit();
       this.#realmCoordinator?.publish({ kind: "deleted", seq: result.seq, entity: before });
+      this.#afterCommit();
       return this.#ack(request.id, result.seq, result.entityId);
     }
 
@@ -428,8 +431,8 @@ export class P1Session {
       ? completeState(component, request.body.state)
       : applyPatch(component, before.components[component].state, request.body.patch);
     const result = world.replaceMutableComponent(entityId, component, state, baseRevision, authorityEpoch);
-    this.#afterCommit();
     this.#realmCoordinator?.publish({ kind: "updated", seq: result.seq, before, entity: result.entity, component });
+    this.#afterCommit();
     return this.#ack(request.id, result.seq, entityId, component, result.entity.components[component].revision);
   }
 
