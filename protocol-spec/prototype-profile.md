@@ -436,7 +436,7 @@ For each such request, processing order is:
 5. otherwise reserve the ID and begin exactly one logical operation;
 6. cache the operation's terminal result when it completes.
 
-Pending reservations and cached terminal results both count toward `maxRequestDedupEntries`. The host MUST NOT evict a cached result and later re-execute that ID within the session.
+Pending reservations and cached terminal results both count toward `maxRequestDedupEntries`. Pending logical operations additionally count toward `maxPendingStateChangingRequests`. The host MUST NOT evict a cached result and later re-execute that ID within the session.
 
 If a new ID is refused because the table is full, that refusal is outside the dedup guarantee; if capacity later becomes available, the same ID may be admitted as a new logical request.
 
@@ -473,22 +473,31 @@ Required default limits:
 
 | Limit | P1 default |
 | --- | ---: |
-| maximum JSON message bytes | 262,144 |
+| maximum complete reassembled JSON WebSocket message bytes | 262,144 |
 | maximum serialized entity bytes | 131,072 |
-| maximum entities in one snapshot | 2,048 |
+| maximum visible entities per connection | 2,048 |
+| maximum persistent entity records including tombstones | 10,000 |
 | maximum spatial subscription radius | 500 m |
 | maximum explicit entity IDs | 256 |
 | maximum queued outbound bytes per connection | 4,194,304 |
-| maximum mutation requests per participant per second | 60 |
-| maximum cached mutating request results per session | 4,096 |
+| maximum client requests per connection per second | 120 |
+| maximum durable mutation requests per connection per second | 60 |
+| maximum pending state-changing requests per session | 256 |
+| maximum cached/reserved state-changing request IDs per session | 4,096 |
 | maximum asset bytes | 5,242,880 |
 | maximum asset URI characters | 2,048 |
 
 The host MAY advertise smaller limits but MUST NOT silently accept values above its advertised limits.
 
-If a realm join would require more than `maxSnapshotEntities`, the host MUST reject the join with `resource_limit` before sending a partial snapshot. If a subscription replacement would exceed that limit, the host MUST reject the request and keep the previous subscription active.
+`maxMessageBytes` applies to the complete reassembled WebSocket message payload, not an individual WebSocket fragment. Fragmentation MUST NOT bypass the limit.
 
-Exceeded limits return `resource_limit` when a response remains safe to send. If the outbound queue limit is exceeded, the host MAY close the connection rather than allocate unbounded memory.
+All client requests count toward `maxClientRequestsPerSecond`; durable world mutations are additionally subject to `maxMutationRequestsPerSecond`. Snapshot catch-up buffers, subscription-transition buffers, and all queued subscriber/control messages count toward `maxQueuedOutboundBytes`.
+
+If a realm join or subscription replacement would produce an effective view larger than `maxVisibleEntitiesPerConnection`, the host MUST reject it with `resource_limit` before changing the active view. If later valid world mutations would grow an existing effective view beyond that cap, the host MUST send `resource_limit` when safe and close that affected connection rather than silently omit selected entities. The client may reconnect with a narrower subscription.
+
+Live entities plus durable tombstones count toward `maxPersistentEntityRecords`. Once that host-wide budget is full, new `entity.create` requests MUST be rejected with `resource_limit` until administrative cleanup or a later garbage-collection policy frees capacity.
+
+Exceeded limits return `resource_limit` when a response remains safe to send. If the outbound queue/message condition itself prevents a safe response, the host MAY close the connection.
 
 ### 12.1 P1 asset fixture
 
@@ -498,17 +507,26 @@ P1 uses one checked-in conformance asset:
 protocol-spec/fixtures/unit-cube.gltf
 ```
 
-The reference host MUST serve it at:
+The reference host MUST advertise an absolute HTTPS `assetBaseUri` ending in `/` during `session.welcome`, for example:
 
 ```text
-/assets/p1/unit-cube.gltf
+https://realm.example/assets/p1/
 ```
 
-with media type `model/gltf+json`.
+The host serves the fixture as `unit-cube.gltf` under that base with media type `model/gltf+json`.
 
-For P1, `hvtp.renderable@1.asset.uri` MUST equal that same-origin path. Arbitrary remote asset URLs are intentionally not supported.
+For P1, `hvtp.renderable@1` is valid only when:
 
-This restriction is a prototype safety/scope decision, not an HVTP core requirement.
+- `asset.uri` is exactly `"unit-cube.gltf"`;
+- `asset.mediaType` is exactly `"model/gltf+json"`;
+- `node` is exactly `"UnitCube"`;
+- `visible` is a JSON boolean.
+
+Clients resolve the relative asset URI against the advertised `assetBaseUri`. This rule is identical for browser and headless consumers and does not depend on document origin.
+
+P1 clients MUST NOT follow redirects when fetching the fixture. A non-200 response, redirect, oversized body, invalid glTF, or mismatched node/media type is an asset-load failure. The client may show a local placeholder, but MUST NOT mutate shared HVTP state because of that local presentation failure.
+
+Arbitrary remote asset URLs are intentionally not supported in P1. This is a prototype safety/scope decision, not an HVTP core requirement.
 
 ---
 
@@ -554,8 +572,14 @@ P1 deliberately uses a closed wire shape:
 - P1 participant `kind` is either `human` or `agent`;
 - client-generated message/entity IDs are non-empty opaque strings no longer than 128 UTF-8 bytes;
 - realm IDs, participant IDs, subscription IDs, snapshot IDs, and host publication IDs are opaque to clients;
-- JSON numbers used for transforms/materials MUST satisfy the component constraints in §3;
-- `realm.join.body.subscription` is required, although it may be an empty object to request no subscribed world entities beyond the participant's own presence.
+- JSON numbers used for transforms/materials/subscriptions/revision metadata MUST satisfy their P1 numeric domains;
+- `realm.join.body.subscription` is required and uses the `SubscriptionSelector` shape from §10; both `spatial` and `entities` are optional;
+- `subscription.set.body` uses that same selector shape directly;
+- an empty selector object `{}` is valid and requests no subscribed world entities beyond the participant's own presence.
+
+If bytes cannot be parsed as one unique valid UTF-8 JSON request object with a unique valid `id`, the host MAY send an uncorrelated `error` with `body.ref: null` and then continue or close according to the error/resource condition. Oversized messages and unrecoverable UTF-8/JSON framing errors MAY be closed without a response.
+
+Literal tokens such as `NaN` and `Infinity` are invalid JSON. A syntactically valid numeric token that decodes outside the finite P1 numeric domain (for example an implementation decoding `1e400` as infinity) is rejected by the relevant message/component validator.
 
 These closed-shape rules are specific to P1. A later extensible profile may define negotiated optional fields.
 
@@ -604,14 +628,18 @@ Before `session.welcome`, the host MUST reject realm-scoped messages with `inval
       "name": "hvtp-reference-host",
       "version": "0.1.0"
     },
+    "assetBaseUri": "https://realm.example/assets/p1/",
     "limits": {
       "maxMessageBytes": 262144,
       "maxEntityBytes": 131072,
-      "maxSnapshotEntities": 2048,
+      "maxVisibleEntitiesPerConnection": 2048,
+      "maxPersistentEntityRecords": 10000,
       "maxSubscriptionRadiusMeters": 500,
       "maxExplicitEntityIds": 256,
       "maxQueuedOutboundBytes": 4194304,
+      "maxClientRequestsPerSecond": 120,
       "maxMutationRequestsPerSecond": 60,
+      "maxPendingStateChangingRequests": 256,
       "maxRequestDedupEntries": 4096,
       "maxAssetBytes": 5242880,
       "maxAssetUriCharacters": 2048
@@ -702,6 +730,7 @@ A participant may join only one P1 realm per connection. A second `realm.join` b
   "realmEpoch": "epoch-process-01",
   "body": {
     "snapshotId": "snapshot:01",
+    "snapshotBaseSeq": 120,
     "entity": {
       "id": "entity:cube-01",
       "components": {
@@ -723,7 +752,7 @@ A participant may join only one P1 realm per connection. A second `realm.join` b
           "consistency": "authoritative",
           "state": {
             "asset": {
-              "uri": "/assets/p1/unit-cube.gltf",
+              "uri": "unit-cube.gltf",
               "mediaType": "model/gltf+json"
             },
             "node": "UnitCube",
@@ -787,7 +816,7 @@ The illustrative snapshot above contains one shared cube plus the participant's 
         "hvtp.renderable@1": {
           "state": {
             "asset": {
-              "uri": "/assets/p1/unit-cube.gltf",
+              "uri": "unit-cube.gltf",
               "mediaType": "model/gltf+json"
             },
             "node": "UnitCube",
@@ -822,6 +851,7 @@ A subscriber for whom the new entity is visible receives:
   "realmEpoch": "epoch-process-01",
   "seq": 121,
   "body": {
+    "subscriptionId": "subscription:01",
     "entity": {
       "id": "entity:01K7CUBE000000000000001",
       "components": {
@@ -843,7 +873,7 @@ A subscriber for whom the new entity is visible receives:
           "consistency": "authoritative",
           "state": {
             "asset": {
-              "uri": "/assets/p1/unit-cube.gltf",
+              "uri": "unit-cube.gltf",
               "mediaType": "model/gltf+json"
             },
             "node": "UnitCube",
@@ -926,6 +956,7 @@ P1 subscriber publications send the complete resulting component envelope, not m
   "realmEpoch": "epoch-process-01",
   "seq": 122,
   "body": {
+    "subscriptionId": "subscription:01",
     "entityId": "entity:01K7CUBE000000000000001",
     "component": "hvtp.transform@1",
     "value": {
@@ -970,6 +1001,7 @@ Visible subscribers receive:
   "realmEpoch": "epoch-process-01",
   "seq": 123,
   "body": {
+    "subscriptionId": "subscription:01",
     "entityId": "entity:01K7CUBE000000000000001"
   }
 }
@@ -1018,6 +1050,8 @@ Applied response:
 }
 ```
 
+A successful `subscription.set` is a state-changing request under §11. Retrying the same admitted request ID returns the same cached `subscription.applied` terminal response, but MUST NOT replay the historical transition's enter/leave batch.
+
 ### 14.14 View enter
 
 ```json
@@ -1052,7 +1086,7 @@ Applied response:
           "consistency": "authoritative",
           "state": {
             "asset": {
-              "uri": "/assets/p1/unit-cube.gltf",
+              "uri": "unit-cube.gltf",
               "mediaType": "model/gltf+json"
             },
             "node": "UnitCube",
@@ -1132,8 +1166,8 @@ For every committed world mutation, `ack.body.ref`, `status`, and `seq` are requ
   "realmEpoch": "epoch-process-01",
   "body": {
     "ref": "req-move-cube-01",
-    "code": "stale_revision",
-    "message": "Component revision is no longer current.",
+    "code": "revision_mismatch",
+    "message": "Component revision does not match the current revision.",
     "entityId": "entity:01K7CUBE000000000000001",
     "component": "hvtp.transform@1",
     "currentRevision": 2,
@@ -1142,7 +1176,7 @@ For every committed world mutation, `ack.body.ref`, `status`, and `seq` are requ
 }
 ```
 
-For `error`, `body.ref`, `body.code`, and `body.message` are required. Context fields such as `entityId`, `component`, `currentRevision`, and `authorityEpoch` are code-specific and MAY be omitted when not applicable. Top-level `realm` / `realmEpoch` are omitted when the error occurs before a realm/epoch has been established.
+For `error`, `body.ref`, `body.code`, and `body.message` are required. `body.ref` is the request ID when one unique valid ID was parsed; otherwise it is JSON `null`. Context fields such as `entityId`, `component`, `currentRevision`, and `authorityEpoch` are code-specific and MAY be omitted when not applicable. Top-level `realm` / `realmEpoch` are omitted when the error occurs before a realm/epoch has been established.
 
 P1 error codes MUST include:
 
@@ -1155,8 +1189,8 @@ P1 error codes MUST include:
 - `invalid_component_state`;
 - `not_authorized`;
 - `presence_binding_violation`;
-- `stale_revision`;
-- `stale_authority_epoch`;
+- `revision_mismatch`;
+- `authority_epoch_mismatch`;
 - `entity_exists`;
 - `entity_not_found`;
 - `request_id_conflict`;
@@ -1170,15 +1204,17 @@ Clients MUST NOT need to parse human-readable error text.
 
 ### Transform
 
-The Three.js adapter converts the HVTP transform convention explicitly. The protocol model remains independent from Three.js camera conventions.
+The Three.js adapter MUST implement the P1/HVTP transform equation from §3 exactly, including active right-handed quaternion rotation and `T × R × S` composition after the selected glTF node hierarchy. The protocol model remains independent from Three.js camera conventions.
 
 ### Renderable
 
 P1 clients:
 
-- support the P1 unit-cube glTF fixture;
-- instantiate the referenced scene/node;
-- validate media type and advertised asset limits;
+- resolve `unit-cube.gltf` against the advertised `assetBaseUri`;
+- require media type `model/gltf+json`, node `UnitCube`, and boolean `visible`;
+- do not follow redirects;
+- enforce the advertised asset byte limit;
+- instantiate the referenced node when loading succeeds;
 - display a local non-network placeholder if fixture loading fails.
 
 The placeholder is a client error presentation and MUST NOT mutate shared HVTP state.
@@ -1191,7 +1227,12 @@ P1 clients apply `hvtp.material@1.baseColor` using the P1 linear RGBA semantics 
 
 ## 16. Conformance and acceptance
 
-P1 succeeds only when both the happy-path demonstration and the adversarial conformance cases in [p1-conformance.md](./p1-conformance.md) pass.
+P1 has two explicit gates:
+
+1. **P1 Reference Implementation Complete** — the reference host, Three.js client, and headless agent satisfy the happy path and every applicable conformance case except the independently implemented second-consumer case.
+2. **P1 Interoperability Accepted** — the independent second consumer also satisfies the interoperability case. Only this second gate is sufficient to freeze P1 as an interoperability profile.
+
+The conformance cases are defined in [p1-conformance.md](./p1-conformance.md).
 
 The happy path is:
 
@@ -1218,7 +1259,7 @@ No renderer-specific private channel may be used.
 
 ## 17. Interoperability milestone
 
-After P1 passes, the next significant milestone is a **second independently implemented consumer**, not more protocol features.
+After the **P1 Reference Implementation Complete** gate, the next significant milestone is a **second independently implemented consumer**, not more protocol features.
 
 Examples:
 
@@ -1230,6 +1271,8 @@ Examples:
 The proof is:
 
 > The same persisted realm and fixture state has the same meaning outside the original Three.js renderer.
+
+Passing this milestone produces **P1 Interoperability Accepted**.
 
 ---
 
