@@ -39,3 +39,25 @@ test("reference host negotiates hello over WebSocket", async () => {
     await host.close();
   }
 });
+
+
+test("reference host serves the checked-in P1 unit cube fixture", async () => {
+  const host = await createReferenceHost();
+  try {
+    const response = await fetch(`http://${host.host}:${host.port}/assets/p1/unit-cube.gltf`, {
+      redirect: "manual",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "model/gltf+json");
+
+    const fixture = (await response.json()) as {
+      nodes?: Array<{ name?: string }>;
+      accessors?: Array<{ count?: number }>;
+    };
+    assert.equal(fixture.nodes?.[0]?.name, "UnitCube");
+    assert.equal(fixture.accessors?.[0]?.count, 8);
+    assert.equal(fixture.accessors?.[1]?.count, 36);
+  } finally {
+    await host.close();
+  }
+});
