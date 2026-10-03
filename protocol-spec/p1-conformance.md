@@ -789,7 +789,8 @@ Send exact wire inputs:
 
 Required:
 
-- cases 1–3 use malformed/invalid-message handling and, if an error is sent, `body.ref: null`; permitted close behavior is acceptable;
+- cases 1–2 use `invalid_json` with `body.ref: null` if the host sends an error; permitted close behavior is acceptable;
+- case 3 uses `invalid_message` with `body.ref: null` if the host sends an error;
 - case 4 reaches component validation and returns `invalid_component_state` with the parsed request ID;
 - rejected hello remains `CONNECTED`;
 - rejected join remains `NEGOTIATED`;
