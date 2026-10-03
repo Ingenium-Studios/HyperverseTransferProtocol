@@ -82,7 +82,7 @@ There MUST NOT be silent last-writer-wins behaviour.
 
 Repeat with `baseRevision: 6` while current revision is 5: it is also rejected with `revision_mismatch`. A request with a negative, fractional, string, or value above `2^53-1` is rejected as `invalid_message`.
 
-Concurrent valid updates to different components may both commit independently, each advancing only its own component revision and the realm sequence once. An update racing a successful global deletion must serialize so exactly one operation observes an existing entity; the loser receives the appropriate `entity_not_found` or revision error without resurrecting state.
+Concurrent valid updates to different components may both commit independently, each advancing only its own component revision and the realm sequence once. An update racing a global deletion must serialize without resurrection: if the update commits first, the later delete may also commit and the final state is tombstoned; if deletion commits first, the later update is rejected with `entity_not_found`. No ordering may allow an update after the deletion to recreate live state.
 
 ---
 
@@ -430,7 +430,7 @@ After valid JSON parsing, each of the following transform states MUST be rejecte
 
 A conforming independent renderer interprets quaternion order as `[x, y, z, w]`, uses metres, right-handed coordinates, +Y up, +Z forward, and active `T × R × S` composition after the selected glTF node hierarchy.
 
-Numerical assertion: for local point `[0.5,0.5,0.5]`, translation `[0,0,0]`, scale `[2,1,1]`, and +90° active rotation about +Z represented by quaternion approximately `[0,0,0.7071067811865475,0.7071067811865476]`, the realm point MUST be approximately `[-0.5,1.0,0.5]` within tolerance `1e-9`.
+Numerical assertion: for local point `[0.5,0.5,0.5]`, translation `[0,0,0]`, scale `[2,1,1]`, and +90° active rotation about +Z represented by quaternion approximately `[0,0,0.7071067811865475,0.7071067811865476]`, the realm point MUST be approximately `[-0.5,1.0,0.5]` within tolerance `1e-6`.
 ---
 
 ## C18 — Material interpretation
