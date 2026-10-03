@@ -115,12 +115,14 @@ A client-supplied `principal` in `session.hello` is informational only in P1 and
 
 ### 5.1 Read policy
 
-All joined participants may read P1 world state that:
+All joined participants may read non-presence P1 world state that:
 
 1. is allowed by P1's public realm policy; and
 2. is selected by their effective subscription.
 
-Subscription interest does not itself grant authorization. A later profile may restrict read access further.
+A participant's P1 presence entity is readable only by that same participant. P1 does not expose one participant's presence entity to other participants.
+
+Subscription interest does not itself grant authorization. An explicit entity ID that is not readable MUST be omitted from the effective view.
 
 ### 5.2 Shared test entities
 
@@ -129,6 +131,8 @@ Any joined participant may:
 - create a non-presence P1 entity using the allowed components/fixture asset;
 - request `hvtp.transform@1` and `hvtp.material@1` mutations on a non-presence P1 entity;
 - delete a non-presence P1 entity.
+
+A P1 non-presence entity creation request MUST include exactly one `hvtp.transform@1`, one `hvtp.renderable@1`, and one `hvtp.material@1` component and MUST NOT include `hvtp.presence@1`.
 
 This intentionally permissive collaborative policy exists only for the prototype.
 
@@ -142,12 +146,15 @@ Rules:
 
 - only the host may create or delete a presence entity;
 - only the host may create or mutate `hvtp.presence@1`;
-- a participant may request transform mutations only for its **own** presence entity;
-- a participant MUST NOT mutate another participant's presence transform or binding;
+- P1 presence transforms are static host state and are not client-mutable;
+- a participant MUST NOT mutate any presence transform or binding;
 - a client MUST NOT create an entity containing `hvtp.presence@1`;
-- presence entities are not durable across host restart.
+- each presence entity is visible only to its bound participant;
+- presence entities are not durable across host restart and do not consume the persistent realm mutation sequence.
 
 Violation MUST return `not_authorized` or `presence_binding_violation`.
+
+Dynamic avatar/presence motion is intentionally deferred with ephemeral pose transport.
 
 ---
 
@@ -263,6 +270,7 @@ Selectors combine by **union** after read authorization.
 - If both selectors are omitted/empty, the effective subscribed view is empty.
 - Explicitly named entities remain selected regardless of distance, subject to read authorization.
 - The participant's own presence entity is always included in that participant's effective view.
+- Other participants' presence entities are excluded by P1 read authorization even if their IDs are explicitly requested.
 
 P1 does not require occlusion, portals, semantic queries, region routing, or adaptive LOD.
 
@@ -307,12 +315,14 @@ A globally deleted entity that was visible to a subscriber produces `entity.dele
 
 Every client request ID MUST be collision-resistant.
 
-Within a session, the host MUST cache the terminal result of every mutating request ID until that session ends.
+Within a session, the host MUST cache the terminal result of every mutating request ID until that session ends, subject to the advertised `maxRequestDedupEntries` bound. The host MUST NOT evict a cached result and later re-execute the same request ID within that session.
+
+If the deduplication cache is full, new mutating requests MUST be rejected with `resource_limit` rather than growing memory without bound or silently dropping older deduplication records.
 
 If the same session repeats:
 
-- the same request ID with byte-for-byte equivalent semantic request content → return the previously cached terminal result and MUST NOT execute the mutation again;
-- the same request ID with different semantic content → reject with `request_id_conflict`.
+- the same request ID with structurally equal parsed JSON request content (object-key ordering ignored, array ordering significant) → return the previously cached terminal result and MUST NOT execute the mutation again;
+- the same request ID with different parsed request content → reject with `request_id_conflict`.
 
 Every accepted/rejected mutating request receives `ack` or `error` directly, regardless of the requester's active subscription.
 
@@ -348,10 +358,13 @@ Required default limits:
 | maximum explicit entity IDs | 256 |
 | maximum queued outbound bytes per connection | 4,194,304 |
 | maximum mutation requests per participant per second | 60 |
+| maximum cached mutating request results per session | 4,096 |
 | maximum asset bytes | 5,242,880 |
 | maximum asset URI characters | 2,048 |
 
 The host MAY advertise smaller limits but MUST NOT silently accept values above its advertised limits.
+
+If a realm join would require more than `maxSnapshotEntities`, the host MUST reject the join with `resource_limit` before sending a partial snapshot. If a subscription replacement would exceed that limit, the host MUST reject the request and keep the previous subscription active.
 
 Exceeded limits return `resource_limit` when a response remains safe to send. If the outbound queue limit is exceeded, the host MAY close the connection rather than allocate unbounded memory.
 
@@ -460,6 +473,7 @@ Before `session.welcome`, the host MUST reject realm-scoped messages with `inval
       "maxExplicitEntityIds": 256,
       "maxQueuedOutboundBytes": 4194304,
       "maxMutationRequestsPerSecond": 60,
+      "maxRequestDedupEntries": 4096,
       "maxAssetBytes": 5242880,
       "maxAssetUriCharacters": 2048
     }
@@ -605,7 +619,7 @@ A participant may join only one P1 realm per connection. A second `realm.join` b
     "snapshotId": "snapshot:01",
     "subscriptionId": "subscription:01",
     "snapshotBaseSeq": 120,
-    "entityCount": 1
+    "entityCount": 2
   }
 }
 ```
@@ -854,13 +868,48 @@ Applied response:
     "reason": "subscription",
     "entity": {
       "id": "entity:pinned-01",
-      "components": {}
+      "components": {
+        "hvtp.transform@1": {
+          "revision": 2,
+          "authority": "host",
+          "authorityEpoch": 1,
+          "consistency": "authoritative",
+          "state": {
+            "position": [200, 0.5, 0],
+            "rotation": [0, 0, 0, 1],
+            "scale": [1, 1, 1]
+          }
+        },
+        "hvtp.renderable@1": {
+          "revision": 1,
+          "authority": "host",
+          "authorityEpoch": 1,
+          "consistency": "authoritative",
+          "state": {
+            "asset": {
+              "uri": "/assets/p1/unit-cube.gltf",
+              "mediaType": "model/gltf+json"
+            },
+            "node": "UnitCube",
+            "visible": true
+          }
+        },
+        "hvtp.material@1": {
+          "revision": 1,
+          "authority": "host",
+          "authorityEpoch": 1,
+          "consistency": "authoritative",
+          "state": {
+            "baseColor": [0.25, 0.5, 0.75, 1]
+          }
+        }
+      }
     }
   }
 }
 ```
 
-The `entity` field MUST contain the complete authorized P1 component state for that entity; the empty component map above is abbreviated only to keep this document readable and is not a valid P1 materializable entity fixture.
+The `entity` field is complete current authorized state; a client MUST NOT need unseen historical patches to materialize it.
 
 ### 14.15 View leave
 
