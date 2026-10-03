@@ -90,28 +90,33 @@ Concurrent valid updates to different components may both commit independently, 
 
 ### Setup
 
-A component's current metadata is:
+A P1 component's current metadata is:
 
 ```text
 revision = 9
-authorityEpoch = 3
+authorityEpoch = 1
 ```
 
 ### Actions
 
-Run mutations carrying `authorityEpoch: 2`, `authorityEpoch: 4`, and invalid-domain epoch values.
+Run mutations carrying:
+
+- valid-domain mismatch `authorityEpoch: 2`;
+- zero, negative, fractional, string, and values above `2^53-1`.
 
 ### Required results
 
-Epochs 2 and 4 are rejected with:
+Domain validation occurs before equality comparison.
+
+`authorityEpoch: 2` is a valid-domain mismatch and is rejected with:
 
 ```text
 authority_epoch_mismatch
 ```
 
-Negative, zero, fractional, string, or values above `2^53-1` are rejected as `invalid_message`.
+Zero, negative, fractional, string, or values above `2^53-1` are rejected as `invalid_message`.
 
-No mismatch may be accepted because a component or future extension supports mergeable state.
+P1 does not require constructing an authority epoch other than 1 in canonical component state because authority transfer is deferred.
 ---
 
 ## C04 — Entity enters spatial interest
@@ -159,6 +164,16 @@ For step 2:
 
 - A receives `view.entity.enter` with full current state;
 - stale local state from the earlier incarnation is not reused as authoritative state.
+
+### Delayed-enqueue ordering variant
+
+Insert a deterministic barrier after the seq-N leave publication is derived but before it is enqueued. Commit the later re-entry mutation at seq N+1 while that barrier is held.
+
+Required:
+
+- the seq-N `view.entity.leave` is enqueued before the seq-N+1 `view.entity.enter`;
+- the later publication MUST NOT overtake the earlier one;
+- after both arrive, E is present, matching canonical state.
 
 ---
 
@@ -740,6 +755,16 @@ Repeat C08 with each post-cut event:
 
 Each change is buffered and applied exactly once after `realm.snapshot.end` using the correct publication kind.
 
+### Buffered-to-live ordering variant
+
+Delay enqueue of the final buffered post-snapshot publication, then commit a later ordinary live mutation for the same connection.
+
+Required:
+
+- all buffered publications are enqueued in increasing realm-mutation order before the later ordinary live publication;
+- an ordinary live publication MUST NOT overtake a still-buffered relevant publication;
+- receiving an ACK for the later mutation does not permit the client to assume subscriber state through that sequence has already arrived.
+
 ---
 
 ## C31 — Request-table admission and subscription retries
@@ -763,35 +788,51 @@ For `subscription.set` retries:
 
 ---
 
-## C32 — Revision/epoch domains and no-op mutation
+## C32 — Revision/epoch domains, validation precedence, no-op, and overflow
 
 For a component at revision 5 / authority epoch 1:
 
 - revision 5 + epoch 1 is eligible;
-- revision 4 or 6 returns `revision_mismatch`;
-- epoch below or above 1 returns `authority_epoch_mismatch`;
-- zero/negative/fractional/string/out-of-range metadata is `invalid_message`.
+- valid-domain revision 4 or 6 returns `revision_mismatch`;
+- valid-domain epoch 2 returns `authority_epoch_mismatch`;
+- zero/negative/fractional/string/out-of-range revision or epoch metadata is `invalid_message`.
+
+Domain validation MUST occur before equality/mismatch comparison.
 
 Submit a valid `component.set` whose resulting state equals current state.
 
 Required: it advances revision exactly once and realm `seq` exactly once; same-session retry does not advance them again.
 
+### Safe-integer overflow variants
+
+Seed the relevant durable metadata so that:
+
+1. component revision is `2^53-1` with otherwise valid current epoch; and
+2. realm `seq` is `2^53-1`.
+
+In each variant, a new mutation that would require incrementing beyond `2^53-1` is rejected with `resource_limit` **before** canonical state changes. No component state, revision, tombstone, or realm sequence changes.
+
 ---
 
-## C33 — Malformed and uncorrelated errors
+## C33 — UTF-8, JSON syntax, request shape, and uncorrelated errors
 
 Send exact wire inputs:
 
-1. truncated JSON `{`;
-2. literal `NaN` / `Infinity` token;
-3. duplicate decoded request-ID keys such that no unique valid ID exists;
-4. valid JSON with `1e400` in a transform field that decodes outside the finite component domain.
+1. a WebSocket text message whose complete reassembled payload contains invalid UTF-8;
+2. a valid UTF-8 character whose multibyte sequence is split across WebSocket fragments but whose **reassembled** text message is valid UTF-8;
+3. truncated valid-UTF-8 JSON `{`;
+4. literal `NaN` / `Infinity` token;
+5. syntactically valid non-object JSON such as `[]` and `null`;
+6. duplicate decoded request-ID keys such that no unique valid ID exists;
+7. valid request JSON with `1e400` in a transform field that decodes outside the finite component domain.
 
 Required:
 
-- cases 1–2 use `invalid_json` with `body.ref: null` if the host sends an error; permitted close behavior is acceptable;
-- case 3 uses `invalid_message` with `body.ref: null` if the host sends an error;
-- case 4 reaches component validation and returns `invalid_component_state` with the parsed request ID;
+- case 1 fails the WebSocket connection; P1 uses close code 1007 and does not continue processing later requests on that connection;
+- case 2 is accepted by the UTF-8 layer; fragmentation alone MUST NOT make it invalid;
+- cases 3–4 use `invalid_json` with `body.ref: null` if the host sends an application error;
+- cases 5–6 use `invalid_message` with `body.ref: null`;
+- case 7 reaches component validation and returns `invalid_component_state` with the parsed request ID;
 - rejected hello remains `CONNECTED`;
 - rejected join remains `NEGOTIATED`;
 - rejected joined-state mutation remains `JOINED` unless an explicit close rule applies.
@@ -826,6 +867,14 @@ Required: A receives exactly one `entity.deleted` with active `subscriptionId` a
 
 Deleting again returns `entity_not_found` without realm-sequence advancement.
 
+### Delayed-enqueue ordering variants
+
+**Create → delete:** delay enqueue of visible creation at seq N, then commit deletion at seq N+1. The host MUST enqueue `entity.created` before `entity.deleted`; the delete publication MUST NOT overtake creation.
+
+**Delete → later unrelated/live publication:** delay enqueue of `entity.deleted` at seq N, then commit a later relevant mutation/publication at seq N+1. The seq-N deletion is enqueued first.
+
+These variants test publication ordering only; they do not change the creation/deletion precedence rules above.
+
 ---
 
 ## C36 — Live-view overflow is explicit
@@ -858,7 +907,7 @@ It MUST produce C17's numerical transform result and exact lifecycle/publication
 
 **P1 Reference Implementation Complete** requires:
 
-- the happy path in Prototype Profile `16 passes;
+- the happy path in Prototype Profile §16 passes;
 - C01–C22 and C24–C36 pass for the reference host/clients;
 - no test relies on renderer-private messages/state;
 - a clean restart preserves durable world state.
