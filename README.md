@@ -1,143 +1,304 @@
 # 🛰️ Hyperverse Transfer Protocol (HVTP)
 
-**HVTP** is an open application-layer protocol for the **real-time distribution, synchronization, and interaction of 3D virtual spaces** across heterogeneous systems.
+**HVTP** is an open application-layer protocol for **shared spatial worlds**.
 
-> Designed to bridge virtual environments — not platforms.
+It defines how heterogeneous clients, engines, simulations, services, and autonomous agents can agree on:
 
-HVTP enables **collaborative 3D environments** (CVEs) where users and systems can share, manipulate, and persist scenes using a unified, extensible **scene graph format** based on [glTF](https://www.khronos.org/gltf). It defines a protocol and runtime model that supports **live editing**, **multi-client presence**, and **distributed rendering** across engines, devices, and networks.
+- what entities exist;
+- what components and state those entities have;
+- who is authoritative for mutable state;
+- how participants observe and interact with the world;
+- how portable assets are referenced;
+- how world state is synchronized and persisted.
 
----
+> **Designed to bridge virtual environments — not platforms.**
 
-## ✨ Vision
-
-We aim to create a **free, open, and decentralized system** for connecting spatial computing applications — from game engines to web renderers, from digital twins to simulation platforms.
-
-HVTP is not a game engine. It’s not a platform. It’s a **real-time, interoperable bridge** between any spatial system that supports 3D scenes.
-
----
-
-## 🔧 Features (Planned & In Progress)
-
-### ✅ Core Capabilities
-
-* 📡 **Application-layer protocol** (engine-agnostic)
-* 🧠 **Shared scene graph model** using glTF
-* 🔄 **Real-time updates & delta sync**
-* 🔀 **Bi-directional synchronization** of scene changes
-* 🌐 **Multi-client collaboration** and session awareness
-* 📁 **Platform-neutral asset referencing** (IPFS, CDN, local, etc.)
-
-### 🧱 Extensible Modules
-
-* 🧍 **Identity & Presence** (DID-compatible avatar protocols)
-* 🎭 **Avatar support** with glTF/VRM extensions
-* 🔐 **Access control & permissioning** per scene or entity
-* ⚡ **Scripting & behavior graphs** (planned support for Lua/WASM)
-* 🛰️ **Teleportation & routing** between hosted virtual scenes
-* 🪞 **Engine bridges** (Unity, Unreal, Godot, Three.js, Python, WebXR)
+HVTP is not a game engine, rendering API, social platform, blockchain, or metaverse product. It is a protocol substrate that applications can build on.
 
 ---
 
-## 📦 Architecture Overview
+## 🚧 Status
 
-HVTP follows a **client-server or peer-mesh model**, where each participant maintains a **local scene graph** and exchanges updates through a lightweight, binary or JSON-based messaging layer.
+HVTP is currently an **experimental protocol redesign**.
+
+The current working specification is:
+
+- [HVTP 0.2 Draft Core Specification](./protocol-spec/hvtp.md)
+- [HVTP 0.2 Prototype Profile P1](./protocol-spec/prototype-profile.md)
+- [P1 Adversarial Conformance Cases](./protocol-spec/p1-conformance.md)
+
+The immediate goal is not protocol completeness. It is to build the smallest credible interoperability experiment and learn from real implementation pressure.
+
+---
+
+## ✨ Core design
+
+HVTP 0.2 moves away from treating a glTF scene graph as the entire shared world model.
+
+Instead:
+
+```text
+HVTP Realm
+└── Entity
+    ├── Transform
+    ├── Renderable ─────► glTF / GLB
+    ├── Material
+    ├── Physics
+    ├── Interaction
+    ├── Ownership
+    ├── Permissions
+    ├── Presence
+    └── Behaviour
+```
+
+The distinction is deliberate:
+
+> **glTF describes portable renderable content. HVTP describes world identity, state, authority, interaction, and change.**
+
+A Three.js client, Unreal client, Godot client, headless simulation, or AI agent should all be able to observe the same HVTP entity without sharing the same engine object model.
+
+---
+
+## 🧭 Design principles
+
+### Entity + component world model
+
+World state is composed from engine-neutral entities and versioned components.
+
+No core concept depends on `THREE.Object3D`, Unreal Actor, Unity GameObject, or Godot Node.
+
+### Explicit authority
+
+Ownership is not authority.
+
+Every mutable component has a defined canonical writer or consistency model. Local prediction is allowed; canonical state is explicit.
+
+This prevents "every client simulated it, hopefully they all agree" from becoming a distributed-systems strategy.
+
+### First-class human and AI participants
+
+Humans, bots, services, simulations, and AI agents use the same participant model.
+
+A persistent external intelligence may project one or more spatial **presence entities** into a realm without moving its reasoning or memory into the avatar itself.
+
+### Assets are references
+
+glTF/GLB is the preferred portable 3D asset format. VRM may be used for avatars. Other media types can be negotiated.
+
+Assets are content referenced by world state, not the world model itself.
+
+### Capability-based behaviours
+
+HVTP is intended to support portable behaviours through sandboxed runtimes such as WASM, Lua, or behaviour graphs.
+
+Scripts do not receive ambient filesystem/network/process access. World mutations still pass through normal authority and permission rules.
+
+### Transport profiles
+
+The semantic protocol is transport independent.
+
+The first reference profile intentionally uses **JSON over WebSocket**. WebTransport, binary encodings, and peer/federated transports are later profiles rather than prerequisites.
+
+---
+
+## 📦 Conceptual architecture
 
 ```mermaid
 graph TD
-    A[Unity Client] -->|HVTP Protocol| B[Relay Node / Scene Host]
-    C[Python Simulation] -->|HVTP Protocol| B
-    D[WebXR Frontend] -->|HVTP Protocol| B
-    E[glTF Asset Store] --> B
+    TS[Three.js Client] -->|HVTP/WS| H[Realm Host]
+    TS2[Second Web Client] -->|HVTP/WS| H
+    A[Headless / AI Agent] -->|HVTP/WS| H
+    U[Future Unreal Bridge] -.->|HVTP| H
+    G[Future Godot Bridge] -.->|HVTP| H
+
+    H --> P[(Persistence)]
+    H --> AS[Asset References]
+    AS --> GLTF[glTF / GLB / VRM]
 ```
 
-* **Scene updates** are diffed and propagated efficiently.
-* **Clients** can subscribe to subgraphs or specific entities.
-* **Sessions** track who is present, what is visible, and what has changed.
+The renderer is deliberately replaceable.
 
----
-
-## 🗃️ Technical Stack
-
-| Layer           | Tech / Spec                                         |
-| --------------- | --------------------------------------------------- |
-| Protocol Format | JSON / Binary (MessagePack or CBOR)                 |
-| Scene Graph     | [glTF 2.0](https://www.khronos.org/gltf)            |
-| Identity        | [DID Core](https://www.w3.org/TR/did-core/), OMI ID |
-| Avatar Format   | VRM / glTF + extensions                             |
-| Hosting / Sync  | WebSocket / QUIC / P2P / IPFS                       |
-| Extensions      | Custom glTF extras, behavior scripts                |
-
----
-
-## 🔍 Use Cases
-
-* 🔧 **Collaborative 3D design tools**
-* 🎓 **Immersive educational platforms**
-* 🏙️ **Digital twins & smart cities**
-* 🤝 **Cross-engine multiplayer frameworks**
-* 🔬 **Scientific simulations**
-* 🚀 **Virtual social or enterprise spaces**
-
----
-
-## 🤖 AI Agents Integration
-
-HVTP is designed not only for human users but also for **autonomous AI agents** capable of **observing, navigating, interacting with**, and even **modifying** the shared scene.
-
-Modern virtual environments often involve non-human participants:
-
-* 🧠 **NPCs powered by LLMs or behavioral models**
-* 🤖 **Bots for QA testing or automated moderation**
-* 📡 **Digital twins driven by real-world sensors or APIs**
-* 🧑‍🚀 **Cognitive agents exploring and learning in CVEs**
-
-HVTP treats these agents as **first-class participants** in the collaborative space, with their own presence, permissions, and communication channels.
-
----
-
-## 📂 Repository Structure (Planned)
-
-```
-/protocol-spec     # Core protocol definition (messages, scenes, sessions)
-/reference-server  # Node.js or Python relay node
-/clients           # Unity, Web, Godot, Python integrations
-/examples          # Multi-client scenes and demos
-/docs              # Specification, diagrams, contributions
+```text
+HVTP Entity
+    │
+    ├── Three.js Adapter ──► THREE.Object3D
+    ├── Unreal Adapter ────► Actor / Components
+    ├── Godot Adapter ─────► Node3D
+    └── Agent Adapter ─────► structured observation/action
 ```
 
 ---
 
-## 🚀 Getting Started (WIP)
+## 🧱 Core concepts
 
-We’re in **early development**. Want to get involved?
+HVTP 0.2 distinguishes several concepts that are often accidentally collapsed:
 
-### 🔨 Clone & Contribute
+| Concept | Meaning |
+| --- | --- |
+| **Realm** | Shared spatial state space |
+| **Region** | Host/scaling partition inside a realm |
+| **Participant** | Connected human, bot, AI, service, or simulation |
+| **Principal** | Persistent identity reference |
+| **Presence** | Spatial projection of a participant |
+| **Entity** | Identity-bearing world object |
+| **Component** | Typed state attached to an entity |
+| **Authority** | Source allowed to publish canonical component state |
+| **Permission** | Whether an actor may request an operation |
+| **Ownership** | Application/domain metadata |
+| **Event** | Something that happened |
+| **Subscription** | State/event interest declaration |
+| **Asset** | Referenced external content |
 
-```bash
-git clone https://github.com/faustodc/HyperverseTransferProtocol
-cd hvtp
+Keeping these concepts separate is a major part of the 0.2 redesign.
+
+---
+
+## 🤖 AI agents and digital presences
+
+HVTP treats AI agents as ordinary first-class participants.
+
+That means an agent can:
+
+- join a realm;
+- subscribe to nearby or task-relevant entities;
+- receive structured world state directly;
+- maintain a spatial avatar/presence;
+- interact with objects using semantic events;
+- request permitted world mutations;
+- communicate with humans and other agents.
+
+The agent itself remains external to the presence unless an application chooses otherwise.
+
+This model supports persistent reasoning or orchestration systems that project a digital representation into a shared world while their memory, tools, objectives, and execution remain outside that world.
+
+---
+
+## 🌍 Application layers
+
+HVTP intentionally keeps higher-level world semantics outside the core protocol.
+
+Applications may define extensions for concepts such as:
+
+- land and spatial claims;
+- persistent construction;
+- civic institutions and governance;
+- economy and commerce;
+- social systems;
+- historical or audit state.
+
+The intended layering is:
+
+```text
+Application / world
+  domain systems and product semantics
+                    │
+          HVTP application extensions
+                    │
+HVTP
+  entities · components · events · authority · presence
+                    │
+      glTF / VRM / behaviours / assets
+                    │
+        WebSocket / future transports
 ```
 
-### 📚 Read the Protocol Spec (coming soon)
+This keeps HVTP useful across unrelated products and domains.
 
-* `/protocol-spec/hvtp.md`
+---
+
+## 🧪 First prototype
+
+The first prototype is intentionally small:
+
+- TypeScript reference host;
+- browser client using Three.js;
+- JSON over WebSocket;
+- checked-in glTF conformance asset resolved from a host-advertised HTTP(S) asset base;
+- host-authoritative canonical state;
+- simple durable persistence;
+- human and agent participants.
+
+The happy path remains deliberately modest: two browsers create/mutate a renderable cube, the host restarts without losing durable state, and a headless agent observes and requests a permitted change.
+
+That demonstration is **not enough by itself**. P1 also requires adversarial cases for concurrent revisions, snapshot boundaries, serialized subscription generations, exact spatial membership, transform composition, retry uncertainty, presence authorization, persistence failures, bounded resource behavior, malformed input, asset resolution, and lifecycle publication precedence.
+
+P1 uses two gates: **Reference Implementation Complete** for the reference host/Three.js/headless stack, followed by **Interoperability Accepted** when a second independently implemented consumer proves the same wire, transform, and lifecycle meaning. Only the second gate freezes P1.
+
+See [Prototype Profile P1](./protocol-spec/prototype-profile.md) and [P1 Conformance Cases](./protocol-spec/p1-conformance.md).
+
+---
+
+## 🔌 Planned protocol areas
+
+The current design includes or anticipates:
+
+- session negotiation;
+- realm join/leave;
+- snapshots and live deltas;
+- entity lifecycle;
+- component state and revisions;
+- explicit authority;
+- interest subscriptions;
+- identity and presence;
+- permissions;
+- semantic interactions/events;
+- persistent state;
+- sandboxed behaviours;
+- portable assets;
+- avatars;
+- AI participants;
+- future realm transfer/federation.
+
+Several areas remain intentionally unresolved and are listed in the draft specification.
+
+---
+
+## 📂 Repository direction
+
+```text
+/protocol-spec
+  hvtp.md
+  prototype-profile.md
+  p1-conformance.md
+  /fixtures
+    unit-cube.gltf
+
+/packages                 # future
+  protocol-types
+  reference-host
+  three-client
+  agent-client
+
+/examples                 # future
+/docs                     # future RFCs and design notes
+```
 
 ---
 
 ## 🤝 Contributing
 
-We welcome engine developers, protocol designers, WebXR enthusiasts, simulation researchers, and anyone passionate about open spatial computing.
-* Submit PRs and RFCs
-* Help us test engine bridges (Unity, Godot, etc.)
+HVTP is early enough that implementation feedback is more valuable than speculative completeness.
+
+Good contributions include:
+
+- protocol review;
+- focused RFCs;
+- interoperable client experiments;
+- transport experiments after P1;
+- engine adapters;
+- security/adversarial review;
+- behaviour sandbox experiments.
+
+Please keep application-specific semantics out of core unless they are broadly required for interoperable spatial systems.
 
 ---
 
 ## 🧭 License
 
-[MIT License](./LICENSE) — because freedom matters.
+[MIT License](./LICENSE).
 
 ---
 
-## ✉️ Contact & Credits
+## Credits
 
-Built by the community of open 3D protocol advocates. Inspired by the work of the Open Metaverse Interoperability Group, the Khronos Group, and pioneers of collaborative virtual environments.
+HVTP is inspired by collaborative virtual environments, open virtual-world systems, the Open Metaverse Interoperability Group, the Khronos ecosystem, and the long history of people trying to make virtual worlds interoperable instead of trapping them inside one platform.
