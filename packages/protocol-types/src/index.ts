@@ -119,11 +119,46 @@ export interface ErrorMessage {
 }
 
 export interface P1ComponentEnvelope<State> {
-  readonly revision: 1;
+  readonly revision: number;
   readonly authority: "host";
   readonly authorityEpoch: 1;
   readonly consistency: "authoritative";
   readonly state: State;
+}
+
+export interface P1TransformState {
+  readonly position: readonly [number, number, number];
+  readonly rotation: readonly [number, number, number, number];
+  readonly scale: readonly [number, number, number];
+}
+
+export interface P1RenderableState {
+  readonly asset: {
+    readonly uri: "unit-cube.gltf";
+    readonly mediaType: "model/gltf+json";
+  };
+  readonly node: "UnitCube";
+  readonly visible: boolean;
+}
+
+export interface P1MaterialState {
+  readonly baseColor: readonly [number, number, number, number];
+}
+
+export interface P1SharedEntityInput {
+  readonly id: string;
+  readonly transform: P1TransformState;
+  readonly renderable: P1RenderableState;
+  readonly material: P1MaterialState;
+}
+
+export interface P1SharedEntity {
+  readonly id: string;
+  readonly components: {
+    readonly "hvtp.transform@1": P1ComponentEnvelope<P1TransformState>;
+    readonly "hvtp.renderable@1": P1ComponentEnvelope<P1RenderableState>;
+    readonly "hvtp.material@1": P1ComponentEnvelope<P1MaterialState>;
+  };
 }
 
 export interface P1PresenceEntity {
@@ -175,7 +210,7 @@ export interface EntitySnapshotMessage extends RealmSnapshotEnvelope {
   readonly body: {
     readonly snapshotId: string;
     readonly snapshotBaseSeq: number;
-    readonly entity: P1PresenceEntity;
+    readonly entity: P1PresenceEntity | P1SharedEntity;
   };
 }
 
