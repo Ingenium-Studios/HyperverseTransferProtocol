@@ -386,13 +386,14 @@ Each connection has one serialized logical outbound stream. The host MUST serial
 
 For one replacement, the host:
 
-1. finishes enqueueing any already-determined subscriber publications up to boundary `baseRealmSeq`;
-2. captures `baseRealmSeq` and computes the new authorized effective view at that boundary;
-3. buffers subscriber-relevant post-boundary changes;
-4. sends `subscription.applied` with a new unique connection-local `subscriptionId`, the effective selectors, and `baseRealmSeq`;
-5. sends all required `view.entity.leave` records for entities in the old view but not the new view;
-6. sends all required `view.entity.enter` records with complete current state for entities in the new view but not the old view;
-7. only after the transition batch is complete, flushes buffered post-boundary changes and resumes ordinary live output.
+1. chooses `baseRealmSeq` as the highest canonical realm mutation sequence that has been fully projected through the connection's **old** subscription;
+2. ensures no publication derived from a mutation at or below `baseRealmSeq` remains pending for later enqueue under the old view;
+3. computes the new authorized effective view from canonical realm state at exactly `baseRealmSeq`;
+4. buffers subscriber-relevant mutations with sequence greater than `baseRealmSeq`;
+5. sends `subscription.applied` with a new unique connection-local `subscriptionId`, the effective selectors, and `baseRealmSeq`;
+6. sends all required `view.entity.leave` records for entities in the old view but not the new view;
+7. sends all required `view.entity.enter` records with complete current state for entities in the new view but not the old view;
+8. only after the transition batch is complete, flushes buffered post-boundary changes and resumes ordinary live output.
 
 The transition batch is noninterleaved. All subscriber-scoped messages after `subscription.applied` carry the active `subscriptionId`. A client MUST process subscriber-scoped state only when its `subscriptionId` equals the client's currently active subscription ID; a message carrying any other subscription ID is stale for that view and is ignored.
 
