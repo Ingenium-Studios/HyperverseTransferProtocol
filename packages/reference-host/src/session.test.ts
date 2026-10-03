@@ -131,14 +131,22 @@ test("realm.join enqueues joined + one private presence snapshot before JOINED",
 
   const duringJoin = only(session.handleText(join()));
   assert.equal(duringJoin.type, "error");
-  if (duringJoin.type === "error") assert.equal(duringJoin.body.code, "invalid_state");
+  if (duringJoin.type === "error") {
+    assert.equal(duringJoin.body.code, "invalid_state");
+    assert.equal(duringJoin.realm, "urn:hvtp:realm:prototype-world");
+    assert.equal(duringJoin.realmEpoch, "epoch:test");
+  }
 
   dispatch.afterEnqueue?.();
   assert.equal(session.state, "JOINED");
 
   const secondJoin = only(session.handleText(join()));
   assert.equal(secondJoin.type, "error");
-  if (secondJoin.type === "error") assert.equal(secondJoin.body.code, "invalid_state");
+  if (secondJoin.type === "error") {
+    assert.equal(secondJoin.body.code, "invalid_state");
+    assert.equal(secondJoin.realm, "urn:hvtp:realm:prototype-world");
+    assert.equal(secondJoin.realmEpoch, "epoch:test");
+  }
 });
 
 test("invalid realm.join leaves the session NEGOTIATED", () => {
