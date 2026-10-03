@@ -25,6 +25,7 @@ The current working specification is:
 
 - [HVTP 0.2 Draft Core Specification](./protocol-spec/hvtp.md)
 - [HVTP 0.2 Prototype Profile P1](./protocol-spec/prototype-profile.md)
+- [P1 Adversarial Conformance Cases](./protocol-spec/p1-conformance.md)
 
 The immediate goal is not protocol completeness. It is to build the smallest credible interoperability experiment and learn from real implementation pressure.
 
@@ -212,24 +213,18 @@ The first prototype is intentionally small:
 - TypeScript reference host;
 - browser client using Three.js;
 - JSON over WebSocket;
-- glTF/GLB assets over HTTP(S);
+- checked-in glTF conformance asset over same-origin HTTP(S);
+- host-authoritative canonical state;
 - simple durable persistence;
 - human and agent participants.
 
-The acceptance test is:
+The happy path remains deliberately modest: two browsers create/mutate a renderable cube, the host restarts without losing durable state, and a headless agent observes and requests a permitted change.
 
-1. two browser clients join one realm;
-2. client A creates a cube;
-3. client B sees it;
-4. A moves it and B sees the canonical transform;
-5. B changes its material and A sees the result;
-6. the host restarts and the cube persists;
-7. a headless agent joins, observes the entity, and performs a permitted mutation;
-8. both human clients observe the agent's accepted change.
+That demonstration is **not enough by itself**. P1 also requires adversarial cases for concurrent revisions, snapshot boundaries, view enter/leave, retry uncertainty, presence authorization, persistence failures, resource limits, and independent-client interpretation.
 
-After that passes, the next major proof should be a **second independently implemented client/runtime**, not feature expansion.
+After P1 passes, the next major proof should be a **second independently implemented client/runtime**, not feature expansion.
 
-See [Prototype Profile P1](./protocol-spec/prototype-profile.md).
+See [Prototype Profile P1](./protocol-spec/prototype-profile.md) and [P1 Conformance Cases](./protocol-spec/p1-conformance.md).
 
 ---
 
@@ -264,6 +259,9 @@ Several areas remain intentionally unresolved and are listed in the draft specif
 /protocol-spec
   hvtp.md
   prototype-profile.md
+  p1-conformance.md
+  /fixtures
+    unit-cube.gltf
 
 /packages                 # future
   protocol-types
