@@ -105,6 +105,8 @@ Every P1 component instance uses:
 
 The P1 host MUST NOT delegate canonical component authority to clients. Clients submit mutation requests; the host remains the canonical writer.
 
+For a headless participant, "support" for `hvtp.renderable@1` and `hvtp.material@1` means parsing, storing, and exposing their structured state correctly; no visual rendering engine is required.
+
 ---
 
 ## 5. P1 authorization policy
@@ -379,14 +381,17 @@ A globally deleted entity that was visible to a subscriber produces `entity.dele
 
 Every client request ID MUST be collision-resistant.
 
-Within a session, the host MUST cache the terminal result of every mutating request ID until that session ends, subject to the advertised `maxRequestDedupEntries` bound. The host MUST NOT evict a cached result and later re-execute the same request ID within that session.
+Within a session, the host MUST reserve a mutating request ID when processing begins and cache its terminal result when processing ends, subject to the advertised `maxRequestDedupEntries` bound. Pending reservations and cached terminal results both count toward this bound.
 
-If the deduplication cache is full, new mutating requests MUST be rejected with `resource_limit` rather than growing memory without bound or silently dropping older deduplication records.
+The host MUST NOT execute two operations concurrently for the same request ID and MUST NOT evict a cached result and later re-execute that ID within the session.
+
+If the deduplication table is full, new mutating requests MUST be rejected with `resource_limit` rather than growing memory without bound or silently dropping older records.
 
 If the same session repeats:
 
-- the same request ID with structurally equal parsed JSON request content (object-key ordering ignored, array ordering significant) → return the previously cached terminal result and MUST NOT execute the mutation again;
-- the same request ID with different parsed request content → reject with `request_id_conflict`.
+- the same request ID with structurally equal parsed JSON request content (object-key ordering ignored, array ordering significant) while the original is pending → attach the retry to the same in-flight logical operation and return the same eventual terminal result;
+- the same request ID with structurally equal parsed JSON request content after completion → return the previously cached terminal result and MUST NOT execute the mutation again;
+- the same request ID with different parsed request content, whether pending or complete → reject with `request_id_conflict`.
 
 Every accepted/rejected mutating request receives `ack` or `error` directly, regardless of the requester's active subscription.
 
