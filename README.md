@@ -213,16 +213,16 @@ The first prototype is intentionally small:
 - TypeScript reference host;
 - browser client using Three.js;
 - JSON over WebSocket;
-- checked-in glTF conformance asset over same-origin HTTP(S);
+- checked-in glTF conformance asset resolved from a host-advertised HTTP(S) asset base;
 - host-authoritative canonical state;
 - simple durable persistence;
 - human and agent participants.
 
 The happy path remains deliberately modest: two browsers create/mutate a renderable cube, the host restarts without losing durable state, and a headless agent observes and requests a permitted change.
 
-That demonstration is **not enough by itself**. P1 also requires adversarial cases for concurrent revisions, snapshot boundaries, view enter/leave, retry uncertainty, presence authorization, persistence failures, resource limits, and independent-client interpretation.
+That demonstration is **not enough by itself**. P1 also requires adversarial cases for concurrent revisions, snapshot boundaries, serialized subscription generations, exact spatial membership, transform composition, retry uncertainty, presence authorization, persistence failures, bounded resource behavior, malformed input, asset resolution, and lifecycle publication precedence.
 
-After P1 passes, the next major proof should be a **second independently implemented client/runtime**, not feature expansion.
+P1 uses two gates: **Reference Implementation Complete** for the reference host/Three.js/headless stack, followed by **Interoperability Accepted** when a second independently implemented consumer proves the same wire, transform, and lifecycle meaning. Only the second gate freezes P1.
 
 See [Prototype Profile P1](./protocol-spec/prototype-profile.md) and [P1 Conformance Cases](./protocol-spec/p1-conformance.md).
 
