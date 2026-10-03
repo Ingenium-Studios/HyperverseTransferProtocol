@@ -289,6 +289,9 @@ If accepting a mutation would require incrementing `seq` or a component revision
 - Interest filtering makes observed realm sequences sparse. Receiving sequence 100 then 103 is legal.
 - Clients MUST NOT treat sequence gaps as packet loss.
 - WebSocket provides ordered reliable delivery for the connection.
+- For each connection, the host MUST project canonical mutations through that connection's effective subscription and enqueue any resulting subscriber publications in increasing realm-mutation order. A publication derived from a later relevant mutation MUST NOT overtake a publication derived from an earlier relevant mutation.
+- This ordering requirement applies across buffered-to-live handoffs: buffered snapshot/subscription changes MUST be fully enqueued in increasing realm-sequence order before later ordinary live publications may be enqueued for that connection.
+- Request-result delivery is independent of subscriber-state delivery. Receiving an `ack` for realm sequence N does not imply that subscriber publications through N have already been delivered.
 - After connection loss, P1 clients MUST rejoin and take a fresh snapshot; P1 defines no incremental catch-up protocol.
 
 ### 7.1 Host restart
@@ -331,7 +334,8 @@ When a participant joins:
 5. the host sends zero or more `entity.snapshot` messages containing complete visible entity state;
 6. the host sends `realm.snapshot.end`;
 7. while steps 4–6 are in progress, subscriber-relevant world/view changes with sequence greater than `snapshotBaseSeq` are buffered for that connection;
-8. after `realm.snapshot.end`, buffered changes are flushed in increasing realm-sequence order.
+8. after `realm.snapshot.end`, buffered changes are flushed in increasing realm-sequence order;
+9. ordinary live publications with later realm sequences MUST NOT overtake any still-buffered snapshot change for that connection.
 
 Live canonical publications MUST NOT be interleaved inside the snapshot stream.
 
@@ -382,7 +386,7 @@ P1 does not require occlusion, portals, semantic queries, region routing, or ada
 
 `subscription.set` replaces the previous interest declaration; it is not additive.
 
-Each connection has one serialized logical outbound stream. The host MUST serialize subscription replacements per connection and MUST NOT interleave one replacement batch with another replacement batch or with later live subscriber publications.
+Each connection has one serialized logical outbound stream. Canonical mutation effects are projected/enqueued onto that stream in increasing realm-mutation order as required by §7. The host MUST serialize subscription replacements per connection and MUST NOT interleave one replacement batch with another replacement batch or with later live subscriber publications.
 
 For one replacement, the host:
 
@@ -581,7 +585,14 @@ P1 deliberately uses a closed wire shape:
 - `realm.joined.body.effectiveSubscription` and `subscription.applied.body.effectiveSubscription` use that same selector shape;
 - an empty selector object `{}` is valid and requests no subscribed world entities beyond the participant's own presence.
 
-If bytes cannot be parsed as one valid UTF-8 JSON request object, the host MAY send an uncorrelated `error` with `body.ref: null` and `code: "invalid_json"`, then continue or close according to the error/resource condition. If JSON parses but no unique valid request `id` exists (including decoded duplicate IDs), use `code: "invalid_message"` with `body.ref: null`. Oversized messages and unrecoverable UTF-8/JSON framing errors MAY be closed without a response.
+Input validation is layered:
+
+- A WebSocket **text message** whose complete reassembled payload is not valid UTF-8 MUST fail the WebSocket connection. P1 uses close code 1007 for this condition. No application-level HVTP error is required. UTF-8 code points MAY be split across WebSocket fragments; validity is evaluated on the reassembled text-message byte stream, not per fragment.
+- Valid UTF-8 whose payload is not syntactically valid JSON MAY receive an uncorrelated `error` with `body.ref: null` and `code: "invalid_json"`; the host MAY then continue or close according to policy.
+- Syntactically valid JSON that is not a valid P1 request object — including `null`, arrays, scalar JSON values, invalid/missing IDs, or decoded duplicate IDs — uses `code: "invalid_message"` with `body.ref: null`.
+- A valid request envelope whose component/message content violates a component rule uses the correlated protocol/component error defined by that validation path.
+
+Oversized complete WebSocket messages MAY be closed without an application-level response.
 
 Literal tokens such as `NaN` and `Infinity` are invalid JSON. A syntactically valid numeric token that decodes outside the finite P1 numeric domain (for example an implementation decoding `1e400` as infinity) is rejected by the relevant message/component validator.
 
