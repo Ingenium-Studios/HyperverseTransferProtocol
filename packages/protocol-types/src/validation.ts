@@ -21,7 +21,8 @@ export function parseJsonRequest(text: string): ParseResult<JsonObject> {
 
   const duplicate = findDuplicateJsonKey(text);
   if (duplicate !== null) {
-    return failure("invalid_message", duplicate === "id" ? null : uniqueRequestId(value), `Duplicate JSON object key: ${duplicate}`);
+    const ref = duplicate.topLevel && duplicate.key === "id" ? null : uniqueRequestId(value);
+    return failure("invalid_message", ref, `Duplicate JSON object key: ${duplicate.key}`);
   }
 
   if (!isObject(value)) {
@@ -130,7 +131,12 @@ function hasOnlyKeys(value: JsonObject, allowed: readonly string[]): boolean {
  * P1 forbids duplicate decoded keys, so after syntax validation we scan the raw
  * JSON grammar and report the first repeated key in any object.
  */
-function findDuplicateJsonKey(text: string): string | null {
+interface DuplicateJsonKey {
+  readonly key: string;
+  readonly topLevel: boolean;
+}
+
+function findDuplicateJsonKey(text: string): DuplicateJsonKey | null {
   let index = 0;
 
   const skipWhitespace = (): void => {
@@ -159,11 +165,11 @@ function findDuplicateJsonKey(text: string): string | null {
     while (index < text.length && !/[\s,}\]]/.test(text[index]!)) index += 1;
   };
 
-  const scanValue = (): string | null => {
+  const scanValue = (objectDepth: number): DuplicateJsonKey | null => {
     skipWhitespace();
     const ch = text[index];
-    if (ch === "{") return scanObject();
-    if (ch === "[") return scanArray();
+    if (ch === "{") return scanObject(objectDepth);
+    if (ch === "[") return scanArray(objectDepth);
     if (ch === '"') {
       scanString();
       return null;
@@ -172,7 +178,7 @@ function findDuplicateJsonKey(text: string): string | null {
     return null;
   };
 
-  const scanArray = (): string | null => {
+  const scanArray = (objectDepth: number): DuplicateJsonKey | null => {
     index += 1;
     skipWhitespace();
     if (text[index] === "]") {
@@ -180,7 +186,7 @@ function findDuplicateJsonKey(text: string): string | null {
       return null;
     }
     while (index < text.length) {
-      const duplicate = scanValue();
+      const duplicate = scanValue(objectDepth);
       if (duplicate !== null) return duplicate;
       skipWhitespace();
       if (text[index] === ",") {
@@ -196,7 +202,7 @@ function findDuplicateJsonKey(text: string): string | null {
     return null;
   };
 
-  const scanObject = (): string | null => {
+  const scanObject = (objectDepth: number): DuplicateJsonKey | null => {
     index += 1;
     const keys = new Set<string>();
     skipWhitespace();
@@ -207,11 +213,11 @@ function findDuplicateJsonKey(text: string): string | null {
     while (index < text.length) {
       skipWhitespace();
       const key = scanString();
-      if (keys.has(key)) return key;
+      if (keys.has(key)) return { key, topLevel: objectDepth === 0 };
       keys.add(key);
       skipWhitespace();
       index += 1; // colon; JSON.parse already validated grammar
-      const duplicate = scanValue();
+      const duplicate = scanValue(objectDepth + 1);
       if (duplicate !== null) return duplicate;
       skipWhitespace();
       if (text[index] === ",") {
@@ -227,7 +233,7 @@ function findDuplicateJsonKey(text: string): string | null {
     return null;
   };
 
-  return scanValue();
+  return scanValue(0);
 }
 
 export function exceedsP1MessageLimit(byteLength: number): boolean {
