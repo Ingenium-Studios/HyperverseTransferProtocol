@@ -154,6 +154,39 @@ Rules:
 
 Violation MUST return `not_authorized` or `presence_binding_violation`.
 
+The host-created P1 presence entity has exactly these components:
+
+```json
+{
+  "id": "entity:presence-8f93",
+  "components": {
+    "hvtp.transform@1": {
+      "revision": 1,
+      "authority": "host",
+      "authorityEpoch": 1,
+      "consistency": "authoritative",
+      "state": {
+        "position": [0, 0, 0],
+        "rotation": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      }
+    },
+    "hvtp.presence@1": {
+      "revision": 1,
+      "authority": "host",
+      "authorityEpoch": 1,
+      "consistency": "authoritative",
+      "state": {
+        "participantId": "participant:8f93",
+        "kind": "human"
+      }
+    }
+  }
+}
+```
+
+The presence `kind` MUST equal the participant kind accepted during session negotiation.
+
 Dynamic avatar/presence motion is intentionally deferred with ephemeral pose transport.
 
 ---
@@ -606,6 +639,8 @@ A participant may join only one P1 realm per connection. A second `realm.join` b
 }
 ```
 
+The illustrative snapshot above contains one shared cube plus the participant's own host-created presence entity. The presence `entity.snapshot` record uses the exact shape defined in §5.3.
+
 ### 14.7 Snapshot end
 
 ```json
@@ -666,7 +701,7 @@ A participant may join only one P1 realm per connection. A second `realm.join` b
 
 A creation request MUST NOT provide canonical metadata such as `revision`, `authority`, `authorityEpoch`, or `consistency`. The host assigns it.
 
-Entity IDs are immutable after acceptance. An existing ID returns `entity_exists`.
+Entity IDs are immutable after acceptance and MUST NOT be reused after global deletion. The P1 host persists tombstones; a create request using either a live or tombstoned ID returns `entity_exists`.
 
 ### 14.9 Canonical entity creation
 
