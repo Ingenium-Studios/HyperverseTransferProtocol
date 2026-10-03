@@ -55,6 +55,17 @@ test("duplicate decoded keys are rejected before shape validation", () => {
   }
 });
 
+test("nested duplicate id preserves the unique top-level request id", () => {
+  const text =
+    '{"hvtp":"0.2","id":"req-top","type":"session.hello","body":{"id":"nested-first","\\u0069d":"nested-second"}}';
+  const result = parseJsonRequest(text);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.code, "invalid_message");
+    assert.equal(result.error.ref, "req-top");
+  }
+});
+
 test("closed-shape error preserves a unique request id", () => {
   const result = parseSessionHello(JSON.stringify({ ...hello, unexpected: true }));
   assert.equal(result.ok, false);
