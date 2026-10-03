@@ -1,6 +1,7 @@
 export const HVTP_VERSION = "0.2" as const;
 export const P1_REALM_ID = "urn:hvtp:realm:prototype-world" as const;
 export const MAX_SAFE_PROTOCOL_INTEGER = Number.MAX_SAFE_INTEGER;
+export const P1_POSITION_LIMIT_METERS = 1_000_000;
 
 export const P1_REQUIRED_COMPONENTS = [
   "hvtp.transform@1",
@@ -51,6 +52,14 @@ export interface P1ProtocolError {
   readonly message: string;
 }
 
+export interface SubscriptionSelector {
+  readonly spatial?: {
+    readonly center: readonly [number, number, number];
+    readonly radius: number;
+  };
+  readonly entities?: readonly string[];
+}
+
 export interface SessionHelloRequest {
   readonly hvtp: typeof HVTP_VERSION;
   readonly id: string;
@@ -67,6 +76,16 @@ export interface SessionHelloRequest {
     readonly capabilities: {
       readonly components: readonly string[];
     };
+  };
+}
+
+export interface RealmJoinRequest {
+  readonly hvtp: typeof HVTP_VERSION;
+  readonly id: string;
+  readonly type: "realm.join";
+  readonly body: {
+    readonly realm: typeof P1_REALM_ID;
+    readonly subscription: SubscriptionSelector;
   };
 }
 
@@ -97,8 +116,87 @@ export interface ErrorMessage {
   };
 }
 
+export interface P1ComponentEnvelope<State> {
+  readonly revision: 1;
+  readonly authority: "host";
+  readonly authorityEpoch: 1;
+  readonly consistency: "authoritative";
+  readonly state: State;
+}
+
+export interface P1PresenceEntity {
+  readonly id: string;
+  readonly components: {
+    readonly "hvtp.transform@1": P1ComponentEnvelope<{
+      readonly position: readonly [0, 0, 0];
+      readonly rotation: readonly [0, 0, 0, 1];
+      readonly scale: readonly [1, 1, 1];
+    }>;
+    readonly "hvtp.presence@1": P1ComponentEnvelope<{
+      readonly participantId: string;
+      readonly kind: ParticipantKind;
+    }>;
+  };
+}
+
+interface RealmSnapshotEnvelope {
+  readonly hvtp: typeof HVTP_VERSION;
+  readonly id: string;
+  readonly realm: typeof P1_REALM_ID;
+  readonly realmEpoch: string;
+}
+
+export interface RealmJoinedMessage extends RealmSnapshotEnvelope {
+  readonly type: "realm.joined";
+  readonly body: {
+    readonly participantId: string;
+    readonly presenceEntityId: string;
+    readonly subscriptionId: string;
+    readonly effectiveSubscription: SubscriptionSelector;
+    readonly snapshotId: string;
+    readonly snapshotBaseSeq: number;
+    readonly requiredComponents: typeof P1_REQUIRED_COMPONENTS;
+  };
+}
+
+export interface RealmSnapshotBeginMessage extends RealmSnapshotEnvelope {
+  readonly type: "realm.snapshot.begin";
+  readonly body: {
+    readonly snapshotId: string;
+    readonly subscriptionId: string;
+    readonly snapshotBaseSeq: number;
+  };
+}
+
+export interface EntitySnapshotMessage extends RealmSnapshotEnvelope {
+  readonly type: "entity.snapshot";
+  readonly body: {
+    readonly snapshotId: string;
+    readonly snapshotBaseSeq: number;
+    readonly entity: P1PresenceEntity;
+  };
+}
+
+export interface RealmSnapshotEndMessage extends RealmSnapshotEnvelope {
+  readonly type: "realm.snapshot.end";
+  readonly body: {
+    readonly snapshotId: string;
+    readonly subscriptionId: string;
+    readonly snapshotBaseSeq: number;
+    readonly entityCount: number;
+  };
+}
+
+export type SessionServerMessage =
+  | SessionWelcomeMessage
+  | ErrorMessage
+  | RealmJoinedMessage
+  | RealmSnapshotBeginMessage
+  | EntitySnapshotMessage
+  | RealmSnapshotEndMessage;
+
 export type ParseResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: P1ProtocolError };
 
-export { parseJsonRequest, parseSessionHello } from "./validation.js";
+export { parseJsonRequest, parseRealmJoin, parseSessionHello } from "./validation.js";
