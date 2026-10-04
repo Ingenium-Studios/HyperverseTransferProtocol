@@ -246,6 +246,38 @@ test("entity.create with a presence component returns an authorization error wit
   }
 });
 
+test("malformed entity.create with presence still fails closed-shape validation first", async () => {
+  const host = await createReferenceHost({ databasePath: ":memory:" });
+  const sockets: WebSocket[] = [];
+  try {
+    const requester = await join(host, {}, sockets);
+
+    const invalidId = JSON.parse(create("req-presence-invalid-id", "entity:placeholder", 0)) as Record<string, any>;
+    invalidId.body.entity.id = "";
+    invalidId.body.entity.components["hvtp.presence@1"] = {
+      state: { participantId: "participant:client", kind: "human" },
+    };
+    const invalidIdResult = (await sendAndCollect(requester, JSON.stringify(invalidId), 1))[0]!;
+    assert.equal(invalidIdResult.type, "error");
+    assert.equal((invalidIdResult.body as Record<string, unknown>).code, "invalid_message");
+
+    const invalidShape = JSON.parse(create("req-presence-invalid-shape", "entity:malformed-presence", 0)) as Record<string, any>;
+    invalidShape.body.entity.unexpected = true;
+    invalidShape.body.entity.components["hvtp.presence@1"] = {
+      state: { participantId: "participant:client", kind: "human" },
+    };
+    const invalidShapeResult = (await sendAndCollect(requester, JSON.stringify(invalidShape), 1))[0]!;
+    assert.equal(invalidShapeResult.type, "error");
+    assert.equal((invalidShapeResult.body as Record<string, unknown>).code, "invalid_message");
+
+    assert.equal(host.worldStore.getRealmSeq(), 0);
+    assert.equal(host.worldStore.getEntity("entity:malformed-presence"), null);
+  } finally {
+    sockets.forEach((socket) => socket.close());
+    await host.close();
+  }
+});
+
 test("response failure after commit publishes canonical state, closes requester, and is confirmed by snapshot", async () => {
   const host = await createReferenceHost({ databasePath: ":memory:", afterDurableCommit: () => { throw new Error("response failure"); } });
   const sockets: WebSocket[] = [];
