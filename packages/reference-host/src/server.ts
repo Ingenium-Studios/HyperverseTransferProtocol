@@ -7,6 +7,8 @@ import WebSocket, { WebSocketServer, type RawData } from "ws";
 import { P1_LIMITS } from "@hvtp/protocol-types";
 import { P1Session } from "./session.js";
 import { P1WorldStore } from "./world-store.js";
+import type { P1WorldStoreOptions } from "./world-store.js";
+import { P1RealmCoordinator, type P1RealmCoordinatorOptions } from "./realm-coordinator.js";
 
 export interface ReferenceHostOptions {
   readonly host?: string;
@@ -14,6 +16,10 @@ export interface ReferenceHostOptions {
   readonly publicOrigin?: string;
   readonly fixturePath?: string;
   readonly databasePath?: string;
+  readonly worldStoreOptions?: P1WorldStoreOptions;
+  readonly realmCoordinatorOptions?: P1RealmCoordinatorOptions;
+  /** Test seam after durable commit but before result/publication delivery. */
+  readonly afterDurableCommit?: () => void;
 }
 
 export interface ReferenceHost {
@@ -23,6 +29,7 @@ export interface ReferenceHost {
   readonly port: number;
   readonly realmEpoch: string;
   readonly worldStore: P1WorldStore;
+  readonly realmCoordinator: P1RealmCoordinator;
   close(): Promise<void>;
 }
 
@@ -35,7 +42,7 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
     options.databasePath ??
     process.env.HVTP_DB_PATH ??
     resolve(process.cwd(), "data", "p1.sqlite");
-  const worldStore = new P1WorldStore(databasePath);
+  const worldStore = new P1WorldStore(databasePath, options.worldStoreOptions);
 
   const server = createServer((req, res) => {
     if (req.method === "GET" && req.url === "/assets/p1/unit-cube.gltf") {
@@ -72,9 +79,15 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
   const origin = options.publicOrigin ?? `http://${host}:${port}`;
   const assetBaseUri = new URL("/assets/p1/", origin).toString();
   const realmEpoch = `epoch:${randomUUID()}`;
+  const realmCoordinator = new P1RealmCoordinator(realmEpoch, options.realmCoordinatorOptions);
 
   wsServer.on("connection", (socket) =>
-    bindSocket(socket, new P1Session(assetBaseUri, realmEpoch, worldStore)),
+    bindSocket(socket, new P1Session(assetBaseUri, realmEpoch, worldStore, {
+      realmCoordinator,
+      deliverCanonical: (message) => socket.send(JSON.stringify(message)),
+      closeTransport: (code, reason) => socket.close(code, reason),
+      ...(options.afterDurableCommit === undefined ? {} : { afterDurableCommit: options.afterDurableCommit }),
+    })),
   );
 
   return {
@@ -84,6 +97,7 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
     port,
     realmEpoch,
     worldStore,
+    realmCoordinator,
     async close(): Promise<void> {
       for (const client of wsServer.clients) client.close(1001, "host shutdown");
       await new Promise<void>((resolveClose) => wsServer.close(() => resolveClose()));

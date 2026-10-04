@@ -30,6 +30,11 @@ export interface DurableDeletion {
   readonly entityId: string;
 }
 
+export interface P1WorldStoreOptions {
+  /** Test seam invoked after state writes and sequence assignment, before COMMIT. */
+  readonly beforeCommit?: () => void;
+}
+
 export class P1StoreError extends Error {
   readonly code: P1ErrorCode;
   readonly currentRevision: number | undefined;
@@ -39,6 +44,13 @@ export class P1StoreError extends Error {
     this.name = "P1StoreError";
     this.code = code;
     this.currentRevision = currentRevision;
+  }
+}
+
+export class P1CommitOutcomeUnknown extends Error {
+  constructor() {
+    super("Durable commit outcome is unknown.");
+    this.name = "P1CommitOutcomeUnknown";
   }
 }
 
@@ -52,8 +64,10 @@ export class P1StoreError extends Error {
  */
 export class P1WorldStore {
   readonly #db: DatabaseSync;
+  readonly #beforeCommit: (() => void) | undefined;
 
-  constructor(path: string) {
+  constructor(path: string, options: P1WorldStoreOptions = {}) {
+    this.#beforeCommit = options.beforeCommit;
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.#db = new DatabaseSync(path);
     this.#db.exec("PRAGMA foreign_keys = ON");
@@ -121,7 +135,7 @@ export class P1WorldStore {
 
     const entities = rows
       .map((row) => parseStoredEntity(row.entity_json))
-      .filter((entity) => selectedBy(entity, selector));
+      .filter((entity) => entitySelectedBy(entity, selector));
 
     return { baseSeq, entities };
   }
@@ -252,23 +266,44 @@ export class P1WorldStore {
   }
 
   #mutate<T>(operation: (seq: number) => T): T {
-    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      this.#db.exec("BEGIN IMMEDIATE");
+    } catch {
+      throw new P1StoreError("resource_limit", "Durable world transaction could not be started.");
+    }
+    let result: T;
     try {
       const currentSeq = this.getRealmSeq();
       if (currentSeq >= MAX_SAFE_PROTOCOL_INTEGER) {
         throw new P1StoreError("resource_limit", "Realm sequence cannot advance safely.");
       }
       const seq = currentSeq + 1;
-      const result = operation(seq);
+      result = operation(seq);
       this.#db.prepare(
         "UPDATE p1_meta SET integer_value = ? WHERE key = 'realm_seq'",
       ).run(seq);
-      this.#db.exec("COMMIT");
-      return result;
+      this.#beforeCommit?.();
     } catch (error) {
-      this.#db.exec("ROLLBACK");
-      throw error;
+      try {
+        this.#db.exec("ROLLBACK");
+      } catch {
+        throw new P1CommitOutcomeUnknown();
+      }
+      if (error instanceof P1StoreError) throw error;
+      throw new P1StoreError("resource_limit", "Durable world mutation could not be committed.");
     }
+    try {
+      this.#db.exec("COMMIT");
+    } catch {
+      try {
+        this.#db.exec("ROLLBACK");
+      } catch {
+        // The transaction outcome is ambiguous. Callers must close the session
+        // and let a fresh snapshot resolve durable state.
+      }
+      throw new P1CommitOutcomeUnknown();
+    }
+    return result;
   }
 }
 
@@ -288,6 +323,8 @@ function validateSharedEntityInput(input: P1SharedEntityInput): void {
   validateMaterialState(input.material);
 
   if (
+    !hasExactlyKeys(input.renderable, ["asset", "node", "visible"]) ||
+    !hasExactlyKeys(input.renderable.asset, ["uri", "mediaType"]) ||
     input.renderable.asset.uri !== "unit-cube.gltf" ||
     input.renderable.asset.mediaType !== "model/gltf+json" ||
     input.renderable.node !== "UnitCube" ||
@@ -299,6 +336,9 @@ function validateSharedEntityInput(input: P1SharedEntityInput): void {
 
 function validateTransformState(value: P1TransformState | P1MaterialState): asserts value is P1TransformState {
   const candidate = value as P1TransformState;
+  if (!hasExactlyKeys(candidate as unknown as Record<string, unknown>, ["position", "rotation", "scale"])) {
+    throw new P1StoreError("invalid_component_state", "Transform state has missing or unsupported fields.");
+  }
   const position = candidate.position;
   const rotation = candidate.rotation;
   const scale = candidate.scale;
@@ -344,6 +384,9 @@ function validateTransformState(value: P1TransformState | P1MaterialState): asse
 }
 
 function validateMaterialState(value: P1TransformState | P1MaterialState): asserts value is P1MaterialState {
+  if (!hasExactlyKeys(value, ["baseColor"])) {
+    throw new P1StoreError("invalid_component_state", "Material state has missing or unsupported fields.");
+  }
   const baseColor = (value as P1MaterialState).baseColor;
   if (
     !Array.isArray(baseColor) ||
@@ -358,6 +401,12 @@ function validateMaterialState(value: P1TransformState | P1MaterialState): asser
   ) {
     throw new P1StoreError("invalid_component_state", "Material baseColor is invalid.");
   }
+}
+
+function hasExactlyKeys(value: unknown, keys: readonly string[]): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const object = value as Record<string, unknown>;
+  return Object.keys(object).length === keys.length && keys.every((key) => Object.hasOwn(object, key));
 }
 
 function validatePositiveProtocolInteger(value: number, label: string): void {
@@ -407,7 +456,7 @@ function parseStoredEntity(text: string): P1SharedEntity {
   return parsed;
 }
 
-function selectedBy(entity: P1SharedEntity, selector: SubscriptionSelector): boolean {
+export function entitySelectedBy(entity: P1SharedEntity, selector: SubscriptionSelector): boolean {
   const explicit = selector.entities?.includes(entity.id) ?? false;
   if (explicit) return true;
 

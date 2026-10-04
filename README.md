@@ -232,7 +232,7 @@ See [Prototype Profile P1](./protocol-spec/prototype-profile.md) and [P1 Conform
 
 Implementation has started on the P1 reference stack.
 
-The first three bounded slices currently provide:
+The first four bounded slices currently provide:
 
 - an npm/TypeScript workspace rooted at `/packages`;
 - `@hvtp/protocol-types` with P1 constants, error codes, closed-shape request validation, request-ID correlation, malformed-JSON classification, duplicate decoded-key detection, `realm.join`, `SubscriptionSelector`, and shared entity/component state types;
@@ -243,14 +243,17 @@ The first three bounded slices currently provide:
 - a host-created, participant-private, static presence entity;
 - ordered initial snapshot emission with both selected durable shared entities and the owning participant's private presence;
 - a SQLite-backed durable world store for shared entities, component revisions, permanent tombstones, current-epoch sequence assignment, and restart recovery;
-- transactional create, transform/material replacement, and global delete primitives used as the persistence foundation for later wire mutation handlers;
+- wire validation and transactional execution for `entity.create`, `component.set`, `component.patch`, and `entity.delete`;
+- same-session request-ID admission, structural-content conflict detection, and cached terminal ACK/error results;
+- per-subscriber canonical create/update/delete and interest enter/leave projection with a realm-wide ordered enqueue queue;
+- deterministic pre-commit and post-commit failure seams, with SQLite transaction rollback before commit and reconnect snapshot recovery after a response failure;
 - P1 spatial/explicit-selector filtering over recovered durable state;
 - a fresh realm epoch/sequence domain on host restart while durable state/revisions/tombstones survive;
-- unit and real WebSocket integration tests for restart recovery and the implemented lifecycle.
+- unit and real WebSocket multi-client integration tests for restart recovery, mutation outcomes, visibility transitions, and delayed-publication ordering.
 
 The store uses Node's built-in `node:sqlite`; Node 22.13+ exposes it without the former command-line flag, although Node 22 still labels the module experimental.
 
-This is **not yet a P1-conformant host**. Post-join subscription replacement/view lifecycle, network entity/component mutation requests, canonical publication ordering, request deduplication, Three.js rendering, and the remaining conformance cases are intentionally still unimplemented.
+This is **not yet a fully P1-conformant host**. Post-join `subscription.set`, dynamic `maxVisibleEntitiesPerConnection` enforcement for live-view growth after world mutations, full outbound queue/rate-limit enforcement, Three.js rendering, and conformance cases outside the completed slices remain unimplemented.
 
 The reviewed HVTP 0.2/P1 specification is now merged on `main`; implementation work continues separately in the reference implementation PR.
 
