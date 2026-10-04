@@ -8,6 +8,7 @@ import {
   parseMutationRequest,
   parseRealmJoin,
   parseSessionHello,
+  parseSubscriptionSet,
   type EntitySnapshotMessage,
   type ErrorMessage,
   type P1ErrorCode,
@@ -19,7 +20,6 @@ import {
   type P1TransformState,
   type P1MaterialState,
   type MutationAckMessage,
-  type CanonicalPublicationMessage,
   type ParticipantKind,
   type RealmJoinedMessage,
   type RealmSnapshotBeginMessage,
@@ -28,7 +28,7 @@ import {
   type SessionWelcomeMessage,
   type SubscriptionSelector,
 } from "@hvtp/protocol-types";
-import { P1RealmCoordinator } from "./realm-coordinator.js";
+import { P1RealmCoordinator, type P1Subscriber } from "./realm-coordinator.js";
 import { P1CommitOutcomeUnknown, P1StoreError, type MutableP1Component } from "./world-store.js";
 
 export type SessionState = "CONNECTED" | "NEGOTIATED" | "JOINING" | "JOINED" | "CLOSED";
@@ -81,12 +81,13 @@ export class P1Session {
   #pendingSnapshotId: string | null = null;
   #presenceEntityId: string | null = null;
   #unregisterPresenceEntity: (() => void) | null = null;
-  #unsubscribe: (() => void) | null = null;
+  #subscriber: P1Subscriber | null = null;
   readonly #realmCoordinator: P1RealmCoordinator | undefined;
-  readonly #deliverCanonical: ((message: CanonicalPublicationMessage) => void) | undefined;
+  readonly #deliverCanonical: ((message: SessionServerMessage) => void) | undefined;
   readonly #closeTransport: ((code: number, reason: string) => void) | undefined;
   readonly #afterDurableCommit: (() => void) | undefined;
   readonly #requestTable = new Map<string, { readonly content: string; terminal?: SessionServerMessage }>();
+  #pendingRequests = 0;
 
   constructor(
     assetBaseUri: string,
@@ -94,7 +95,7 @@ export class P1Session {
     worldView: P1WorldView = EMPTY_WORLD_VIEW,
     options: {
       readonly realmCoordinator?: P1RealmCoordinator;
-      readonly deliverCanonical?: (message: CanonicalPublicationMessage) => void;
+      readonly deliverCanonical?: (message: SessionServerMessage) => void;
       readonly closeTransport?: (code: number, reason: string) => void;
       readonly afterDurableCommit?: () => void;
     } = {},
@@ -117,8 +118,8 @@ export class P1Session {
   close(): void {
     this.#state = "CLOSED";
     this.#pendingSnapshotId = null;
-    this.#unsubscribe?.();
-    this.#unsubscribe = null;
+    this.#subscriber?.unsubscribe();
+    this.#subscriber = null;
     this.#unregisterPresenceEntity?.();
     this.#unregisterPresenceEntity = null;
   }
@@ -162,8 +163,8 @@ export class P1Session {
       return this.#dispatch(this.#error("unsupported_message", ref, "P1 does not support component.ephemeral."));
     }
 
-    if (type === "entity.create" || type === "entity.delete" || type === "component.set" || type === "component.patch") {
-      return this.#handleMutation(text, request);
+    if (type === "entity.create" || type === "entity.delete" || type === "component.set" || type === "component.patch" || type === "subscription.set") {
+      return this.#handleStateChangingRequest(text, request);
     }
 
     return this.#dispatch(this.#error("unsupported_message", ref, `Message ${type} is not implemented by P1.`));
@@ -284,24 +285,24 @@ export class P1Session {
     this.#pendingSnapshotId = snapshotId;
     this.#state = "JOINING";
 
-    return {
-      messages: [joined, begin, ...sharedEntities, presenceSnapshot, end],
-      afterEnqueue: () => {
-        if (this.#state === "JOINING" && this.#pendingSnapshotId === snapshotId) {
-          this.#pendingSnapshotId = null;
-          this.#state = "JOINED";
-          if (this.#realmCoordinator !== undefined && this.#deliverCanonical !== undefined && this.#closeTransport !== undefined) {
-            this.#unregisterPresenceEntity = this.#realmCoordinator.registerPresenceEntity(presenceEntityId);
-            this.#unsubscribe = this.#realmCoordinator.subscribe(
-              effectiveSubscription,
-              subscriptionId,
-              this.#deliverCanonical,
-              this.#closeTransport,
-            );
-          }
-        }
-      },
+    const messages = [joined, begin, ...sharedEntities, presenceSnapshot, end];
+    const afterEnqueue = () => {
+      if (this.#state === "JOINING" && this.#pendingSnapshotId === snapshotId) {
+        this.#pendingSnapshotId = null;
+        this.#state = "JOINED";
+      }
     };
+    if (this.#realmCoordinator !== undefined && this.#deliverCanonical !== undefined && this.#closeTransport !== undefined) {
+      this.#unregisterPresenceEntity = this.#realmCoordinator.registerPresenceEntity(presenceEntityId);
+      const subscriber = this.#realmCoordinator.subscribe(
+        effectiveSubscription, subscriptionId, durableSnapshot, messages, this.#deliverCanonical,
+        (code, reason) => { this.close(); this.#closeTransport?.(code, reason); }, afterEnqueue,
+      );
+      if (this.state === "CLOSED") subscriber.unsubscribe();
+      else this.#subscriber = subscriber;
+      return { messages: [] };
+    }
+    return { messages, afterEnqueue };
   }
 
   #dispatch(message: SessionServerMessage): SessionDispatch {
@@ -324,7 +325,7 @@ export class P1Session {
     };
   }
 
-  #handleMutation(
+  #handleStateChangingRequest(
     text: string,
     parsedRequest: Record<string, unknown>,
   ): SessionDispatch {
@@ -340,9 +341,38 @@ export class P1Session {
     if (this.#requestTable.size >= P1_LIMITS.maxRequestDedupEntries) {
       return this.#dispatch(this.#error("resource_limit", ref, "Session request deduplication table is full."));
     }
+    if (this.#pendingRequests >= P1_LIMITS.maxPendingStateChangingRequests) {
+      return this.#dispatch(this.#error("resource_limit", ref, "Too many pending state-changing requests."));
+    }
 
     const reservation: { content: string; terminal?: SessionServerMessage } = { content };
     this.#requestTable.set(ref, reservation);
+    this.#pendingRequests += 1;
+    if (parsedRequest.type === "subscription.set") {
+      const parsed = parseSubscriptionSet(text);
+      if (parsed.ok && this.#subscriber !== null) {
+        try {
+          const selector = cloneSubscription(parsed.value.body);
+          // Synchronous capture shares the mutation admission boundary; queued work never rereads SQLite.
+          const snapshot = this.#worldView.snapshot(selector);
+          this.#subscriber.replace(selector, snapshot, ref, (terminal) => {
+            reservation.terminal = terminal;
+            this.#activeSubscriptionId = terminal.body.subscriptionId;
+            this.#pendingRequests -= 1;
+          });
+          return { messages: [] };
+        } catch (error) {
+          reservation.terminal = this.#error(error instanceof P1StoreError ? error.code : "resource_limit", ref,
+            error instanceof P1StoreError ? error.message : "Subscription replacement failed.");
+        }
+      } else {
+        reservation.terminal = parsed.ok
+          ? this.#error("invalid_state", ref, "Live subscription coordination is unavailable.")
+          : this.#error(parsed.error.code, ref, parsed.error.message);
+      }
+      this.#pendingRequests -= 1;
+      return this.#dispatch(reservation.terminal);
+    }
     const parsed = parseMutationRequest(text);
     let terminal: SessionServerMessage;
     if (!parsed.ok) {
@@ -375,6 +405,7 @@ export class P1Session {
       }
     }
     reservation.terminal = terminal;
+    this.#pendingRequests -= 1;
     return this.#dispatch(terminal);
   }
 

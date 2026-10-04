@@ -131,6 +131,26 @@ export interface ComponentPatchRequest extends MutationRequestEnvelope {
 
 export type P1MutationRequest = EntityCreateRequest | EntityDeleteRequest | ComponentSetRequest | ComponentPatchRequest;
 
+export interface SubscriptionSetRequest extends MutationRequestEnvelope {
+  readonly type: "subscription.set";
+  readonly body: SubscriptionSelector;
+}
+
+export interface SubscriptionAppliedMessage {
+  readonly hvtp: typeof HVTP_VERSION;
+  readonly id: string;
+  readonly type: "subscription.applied";
+  readonly realm: typeof P1_REALM_ID;
+  readonly realmEpoch: string;
+  readonly body: {
+    readonly ref: string;
+    readonly previousSubscriptionId: string;
+    readonly subscriptionId: string;
+    readonly baseRealmSeq: number;
+    readonly effectiveSubscription: SubscriptionSelector;
+  };
+}
+
 export interface MutationAckMessage {
   readonly hvtp: typeof HVTP_VERSION;
   readonly id: string;
@@ -188,7 +208,7 @@ export type CanonicalPublicationMessage =
       readonly realm: typeof P1_REALM_ID;
       readonly realmEpoch: string;
       readonly seq: number;
-      readonly body: { readonly subscriptionId: string; readonly reason: "interest"; readonly entity: P1SharedEntity };
+      readonly body: { readonly subscriptionId: string; readonly reason: "interest" | "subscription"; readonly entity: P1SharedEntity };
     }
   | {
       readonly hvtp: typeof HVTP_VERSION;
@@ -197,7 +217,7 @@ export type CanonicalPublicationMessage =
       readonly realm: typeof P1_REALM_ID;
       readonly realmEpoch: string;
       readonly seq: number;
-      readonly body: { readonly subscriptionId: string; readonly reason: "interest"; readonly entityId: string };
+      readonly body: { readonly subscriptionId: string; readonly reason: "interest" | "subscription"; readonly entityId: string };
     };
 
 export interface SessionWelcomeMessage {
@@ -347,10 +367,11 @@ export type SessionServerMessage =
   | EntitySnapshotMessage
   | RealmSnapshotEndMessage
   | MutationAckMessage
+  | SubscriptionAppliedMessage
   | CanonicalPublicationMessage;
 
 export type ParseResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: P1ProtocolError };
 
-export { parseJsonRequest, parseMutationRequest, parseRealmJoin, parseSessionHello } from "./validation.js";
+export { parseJsonRequest, parseMutationRequest, parseRealmJoin, parseSessionHello, parseSubscriptionSet } from "./validation.js";

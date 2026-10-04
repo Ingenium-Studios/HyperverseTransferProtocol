@@ -18,7 +18,7 @@ export interface ReferenceHostOptions {
   readonly databasePath?: string;
   readonly worldStoreOptions?: P1WorldStoreOptions;
   readonly realmCoordinatorOptions?: P1RealmCoordinatorOptions;
-  /** Test seam after durable commit but before result/publication delivery. */
+  /** Test seam after durable commit/publication admission but before requester response. */
   readonly afterDurableCommit?: () => void;
 }
 
@@ -81,14 +81,20 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
   const realmEpoch = `epoch:${randomUUID()}`;
   const realmCoordinator = new P1RealmCoordinator(realmEpoch, options.realmCoordinatorOptions);
 
-  wsServer.on("connection", (socket) =>
-    bindSocket(socket, new P1Session(assetBaseUri, realmEpoch, worldStore, {
+  wsServer.on("connection", (socket) => {
+    const session = new P1Session(assetBaseUri, realmEpoch, worldStore, {
       realmCoordinator,
-      deliverCanonical: (message) => socket.send(JSON.stringify(message)),
+      deliverCanonical: (message) => {
+        if (socket.readyState !== WebSocket.OPEN) throw new Error("Subscriber transport is closed.");
+        socket.send(JSON.stringify(message), (error) => {
+          if (error != null) { session.close(); socket.close(1011, "failed to enqueue P1 subscriber output"); }
+        });
+      },
       closeTransport: (code, reason) => socket.close(code, reason),
       ...(options.afterDurableCommit === undefined ? {} : { afterDurableCommit: options.afterDurableCommit }),
-    })),
-  );
+    });
+    bindSocket(socket, session);
+  });
 
   return {
     server,
@@ -111,6 +117,7 @@ function bindSocket(socket: WebSocket, session: P1Session): void {
   const decoder = new TextDecoder("utf-8", { fatal: true });
 
   socket.on("message", (data: RawData, isBinary: boolean) => {
+    if (socket.readyState !== WebSocket.OPEN) return;
     if (isBinary) {
       socket.close(1003, "P1 requires JSON text messages");
       session.close();

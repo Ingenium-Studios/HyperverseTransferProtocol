@@ -173,3 +173,15 @@ test("invalid realm.join leaves the session NEGOTIATED", () => {
   if (result.type === "error") assert.equal(result.body.code, "resource_limit");
   assert.equal(session.state, "NEGOTIATED");
 });
+
+test("subscription.set is rejected before JOINED without reserving a request operation", () => {
+  const session = new P1Session("http://127.0.0.1:8787/assets/p1/", "epoch:test");
+  const request = JSON.stringify({ hvtp: "0.2", id: "replace", type: "subscription.set", realm: "urn:hvtp:realm:prototype-world", body: {} });
+  for (const state of ["CONNECTED", "NEGOTIATED", "JOINING"] as const) {
+    assert.equal(session.state, state);
+    const result = only(session.handleText(request)); assert.equal(result.type, "error");
+    if (result.type === "error") { assert.equal(result.body.code, "invalid_state"); assert.equal(result.body.ref, "replace"); }
+    if (state === "CONNECTED") session.handleText(hello());
+    if (state === "NEGOTIATED") session.handleText(join());
+  }
+});
