@@ -232,7 +232,7 @@ See [Prototype Profile P1](./protocol-spec/prototype-profile.md) and [P1 Conform
 
 Implementation has started on the P1 reference stack.
 
-The first five bounded slices currently provide:
+The first six bounded slices currently provide:
 
 - an npm/TypeScript workspace rooted at `/packages`;
 - `@hvtp/protocol-types` with P1 constants, error codes, closed-shape request validation, request-ID correlation, malformed-JSON classification, duplicate decoded-key detection, `realm.join`, `SubscriptionSelector`, and shared entity/component state types;
@@ -253,6 +253,11 @@ The first five bounded slices currently provide:
 - deterministic pre-commit and post-commit failure seams, with SQLite transaction rollback before commit and reconnect snapshot recovery after a response failure;
 - P1 spatial/explicit-selector filtering over recovered durable state;
 - a fresh realm epoch/sequence domain on host restart while durable state/revisions/tombstones survive;
+- per-connection sliding-window request limiting: `maxClientRequestsPerSecond` (every physical request, including malformed ones) and `maxMutationRequestsPerSecond` (new durable mutations only), driven by an injectable monotonic clock;
+- one per-connection outbound byte budget (`maxQueuedOutboundBytes`) shared by coordinator batches, direct control responses, and writes the WebSocket has not yet completed, with exactly-once release and cleanup on close or send failure;
+- real-wire coverage of single-frame and fragmented `maxMessageBytes` enforcement, `1007` on invalid UTF-8, multibyte characters split across fragments, and C33 JSON/request-shape classification;
+- safe-integer realm-sequence and component-revision overflow rejection before mutation, and live-entity-plus-tombstone budget exhaustion (`maxPersistentEntityRecords`);
+- asset-serving checks (media type, 404, 413 above `maxAssetBytes`) and a startup check that rejects plain-HTTP asset origins outside loopback/local development;
 - unit and real WebSocket multi-client integration tests for restart recovery, mutation outcomes, visibility transitions, and delayed-publication ordering.
 
 The store uses Node's built-in `node:sqlite`; Node 22.13+ exposes it without the former command-line flag, although Node 22 still labels the module experimental.
@@ -261,7 +266,7 @@ The coordinator tracks the selector, generation, and shared-entity membership at
 
 Join registers the subscriber at its captured `snapshotBaseSeq` before snapshot enqueue starts. Later relevant mutations append behind the snapshot, and the same stream prevents ordinary live output from overtaking catch-up. ACKs and cached terminal retry responses remain independent of subscriber delivery. The byte budget includes queued batches and the batch currently waiting behind a test barrier; bytes are released when messages enter the transport queue. This does **not** account for the socket's remaining buffered bytes.
 
-This is **not yet a fully P1-conformant host**. General request-rate limiting, full socket outbound-queue enforcement beyond the coordinator's snapshot/transition/catch-up buffer, the Three.js browser client, a headless reference agent, and the remaining P1 conformance matrix are deferred. Host tests cover the Slice 5 lifecycle/resource cases in C07/C08/C21/C22/C24/C28/C30/C31/C36; client rejection of stale generations or invalid snapshot metadata and independent-consumer acceptance remain unverified.
+This is **not yet a fully P1-conformant host** and does not claim P1 conformance. Host-side resource and transport hardening (Slice 6) is in place; the Three.js browser client, a headless reference agent, client-side snapshot validation and stale-generation rejection, renderer-local asset behavior, the full conformance sweep, and independent-consumer interoperability remain deferred. Host tests cover the lifecycle/resource cases in C07/C08/C21/C22/C24/C28/C30/C31/C32/C33/C36 plus the host-applicable parts of C34; client rejection of stale generations or invalid snapshot metadata and independent-consumer acceptance remain unverified.
 
 The reviewed HVTP 0.2/P1 specification is now merged on `main`; implementation work continues separately in the reference implementation PR.
 

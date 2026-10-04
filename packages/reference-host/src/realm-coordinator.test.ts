@@ -2,6 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { P1_LIMITS, P1_REALM_ID, type ErrorMessage, type SessionServerMessage } from "@hvtp/protocol-types";
 import { P1RealmCoordinator } from "./realm-coordinator.js";
+import { P1OutboundChannel } from "./outbound.js";
+
+/** Synchronously-completing transport that records decoded messages; `failOn` simulates a transport failure. */
+function recordingChannel(delivered: SessionServerMessage[], failOn?: (message: SessionServerMessage) => boolean): P1OutboundChannel {
+  return new P1OutboundChannel({
+    isOpen: () => true,
+    send: (data, done) => {
+      const message = JSON.parse(data) as SessionServerMessage;
+      if (failOn?.(message)) throw new Error("transport failure");
+      delivered.push(message);
+      done();
+    },
+  });
+}
 
 function batch(bytes: number): SessionServerMessage[] {
   const messages: ErrorMessage[] = [];
@@ -27,7 +41,7 @@ test("coordinator byte admission accepts exactly maxQueuedOutboundBytes and reje
     assert.equal(messages.reduce((total, message) => total + Buffer.byteLength(JSON.stringify(message)), 0), P1_LIMITS.maxQueuedOutboundBytes + extra);
     let completed = false;
     const subscriber = coordinator.subscribe({}, "S0", { baseSeq: 0, entities: [] }, messages,
-      (message) => delivered.push(message), (code) => closed.push(code), () => { completed = true; });
+      recordingChannel(delivered), (code) => closed.push(code), () => { completed = true; });
     if (extra === 0) {
       assert.deepEqual(closed, []); assert.deepEqual(delivered, []);
       release(); await coordinator.drain();
@@ -46,7 +60,7 @@ test("coordinator unsubscribe cancels a blocked snapshot without waiting for its
   const coordinator = new P1RealmCoordinator("epoch:test", { beforeSnapshotEnqueue: () => new Promise(() => {}) });
   const delivered: SessionServerMessage[] = [];
   const subscriber = coordinator.subscribe({}, "S0", { baseSeq: 0, entities: [] }, batch(500),
-    (message) => delivered.push(message), () => assert.fail("unsubscribe must not close transport again"), () => assert.fail("closed snapshot cannot complete"));
+    recordingChannel(delivered), () => assert.fail("unsubscribe must not close transport again"), () => assert.fail("closed snapshot cannot complete"));
   // Let the worker enter the barrier before cancellation.
   await Promise.resolve();
   subscriber.unsubscribe(); await coordinator.drain();
@@ -62,7 +76,7 @@ test("coordinator partial transition enqueue failure closes the connection and n
     "hvtp.material@1": { revision: 1, authority: "host", authorityEpoch: 1, consistency: "authoritative", state: { baseColor: [1, 1, 1, 1] } },
   } } as const;
   const subscriber = coordinator.subscribe({ entities: ["E"] }, "S0", { baseSeq: 1, entities: [entity] }, [],
-    (message) => { if (message.type === "view.entity.leave") throw new Error("transport failure"); delivered.push(message); },
+    recordingChannel(delivered, (message) => message.type === "view.entity.leave"),
     (code) => closed.push(code), () => {});
   await coordinator.drain();
   subscriber.replace({}, { baseSeq: 1, entities: [] }, "S1", () => assert.fail("partially delivered batch must not complete"));
