@@ -12,6 +12,7 @@ import {
   type RealmJoinRequest,
   type SessionHelloRequest,
   type SubscriptionSelector,
+  type SubscriptionSetRequest,
 } from "./index.js";
 
 type JsonObject = Record<string, unknown>;
@@ -144,6 +145,21 @@ export function parseRealmJoin(text: string): ParseResult<RealmJoinRequest> {
       },
     },
   };
+}
+
+export function parseSubscriptionSet(text: string): ParseResult<SubscriptionSetRequest> {
+  const parsed = parseJsonRequest(text);
+  if (!parsed.ok) return parsed;
+  const request = parsed.value;
+  const ref = request.id as string;
+  if (!hasOnlyKeys(request, ["hvtp", "id", "type", "realm", "body"]) || request.type !== "subscription.set") {
+    return failure("invalid_message", ref, "Expected the closed subscription.set request shape.");
+  }
+  if (request.hvtp !== HVTP_VERSION) return failure("unsupported_version", ref, "Only HVTP 0.2 is supported by P1.");
+  if (request.realm !== P1_REALM_ID) return failure("realm_not_found", ref, "P1 exposes only the prototype realm.");
+  const selector = parseSubscriptionSelector(request.body, ref);
+  if (!selector.ok) return selector;
+  return success({ hvtp: HVTP_VERSION, id: ref, type: "subscription.set", realm: P1_REALM_ID, body: selector.value });
 }
 
 export function parseMutationRequest(text: string): ParseResult<P1MutationRequest> {

@@ -1,35 +1,52 @@
 import { randomUUID } from "node:crypto";
 import {
-  HVTP_VERSION,
-  P1_REALM_ID,
-  type CanonicalPublicationMessage,
-  type P1SharedEntity,
-  type SubscriptionSelector,
+  HVTP_VERSION, P1_LIMITS, P1_REALM_ID,
+  type CanonicalPublicationMessage, type P1SharedEntity,
+  type SessionServerMessage, type SubscriptionAppliedMessage, type SubscriptionSelector,
 } from "@hvtp/protocol-types";
-import { entitySelectedBy, type MutableP1Component } from "./world-store.js";
+import { entitySelectedBy, P1StoreError, type MutableP1Component } from "./world-store.js";
 
 export type CommittedWorldMutation =
   | { readonly kind: "created"; readonly seq: number; readonly entity: P1SharedEntity }
-  | {
-      readonly kind: "updated";
-      readonly seq: number;
-      readonly before: P1SharedEntity;
-      readonly entity: P1SharedEntity;
-      readonly component: MutableP1Component;
-    }
+  | { readonly kind: "updated"; readonly seq: number; readonly before: P1SharedEntity;
+      readonly entity: P1SharedEntity; readonly component: MutableP1Component }
   | { readonly kind: "deleted"; readonly seq: number; readonly entity: P1SharedEntity };
 
 export interface P1RealmCoordinatorOptions {
-  /** Deterministic test barrier before projecting a committed mutation. */
+  /** Deterministic barriers before enqueue onto an individual connection. */
   readonly beforeMutationEnqueue?: (seq: number) => Promise<void>;
+  readonly beforeSnapshotEnqueue?: (subscriptionId: string) => Promise<void>;
+  readonly beforeTransitionEnqueue?: (subscriptionId: string) => Promise<void>;
 }
 
+interface Batch {
+  readonly messages: readonly SessionServerMessage[];
+  readonly bytes: number;
+  readonly before?: () => Promise<void> | undefined;
+  readonly completed?: () => void;
+}
 interface Subscriber {
-  readonly selector: SubscriptionSelector;
-  readonly subscriptionId: string;
-  readonly deliver: (message: CanonicalPublicationMessage) => void;
+  // These represent the view at the tail of the admitted stream, including queued batches.
+  selector: SubscriptionSelector;
+  subscriptionId: string;
+  view: Set<string>;
+  readonly baseSeq: number;
+  readonly deliver: (message: SessionServerMessage) => void;
   readonly close: (code: number, reason: string) => void;
+  readonly batches: Batch[];
+  readonly abort: AbortController;
+  queuedBytes: number;
+  running: boolean;
   active: boolean;
+}
+export interface P1Subscriber {
+  unsubscribe(): void;
+  replace(
+    selector: SubscriptionSelector,
+    snapshot: { readonly baseSeq: number; readonly entities: readonly P1SharedEntity[] },
+    ref: string,
+    completed: (terminal: SubscriptionAppliedMessage) => void,
+  ): void;
 }
 
 export class P1RealmCoordinator {
@@ -37,7 +54,7 @@ export class P1RealmCoordinator {
   readonly #options: P1RealmCoordinatorOptions;
   readonly #subscribers = new Set<Subscriber>();
   readonly #privatePresenceEntityIds = new Set<string>();
-  #tail: Promise<void> = Promise.resolve();
+  readonly #work = new Set<Promise<void>>();
 
   constructor(realmEpoch: string, options: P1RealmCoordinatorOptions = {}) {
     this.#realmEpoch = realmEpoch;
@@ -47,14 +64,21 @@ export class P1RealmCoordinator {
   subscribe(
     selector: SubscriptionSelector,
     subscriptionId: string,
-    deliver: (message: CanonicalPublicationMessage) => void,
+    snapshot: { readonly baseSeq: number; readonly entities: readonly P1SharedEntity[] },
+    messages: readonly SessionServerMessage[],
+    deliver: (message: SessionServerMessage) => void,
     close: (code: number, reason: string) => void,
-  ): () => void {
-    const subscriber: Subscriber = { selector, subscriptionId, deliver, close, active: true };
+    completed: () => void,
+  ): P1Subscriber {
+    const subscriber: Subscriber = {
+      selector, subscriptionId, view: new Set(this.#authorized(snapshot.entities).map((entity) => entity.id)),
+      baseSeq: snapshot.baseSeq, deliver, close, batches: [], abort: new AbortController(), queuedBytes: 0, running: false, active: true,
+    };
     this.#subscribers.add(subscriber);
-    return () => {
-      subscriber.active = false;
-      this.#subscribers.delete(subscriber);
+    this.#enqueue(subscriber, messages, () => this.#options.beforeSnapshotEnqueue?.(subscriptionId), completed);
+    return {
+      unsubscribe: () => this.#remove(subscriber),
+      replace: (selector, snapshot, ref, completed) => this.#replace(subscriber, selector, snapshot, ref, completed),
     };
   }
 
@@ -62,92 +86,158 @@ export class P1RealmCoordinator {
     this.#privatePresenceEntityIds.add(entityId);
     return () => this.#privatePresenceEntityIds.delete(entityId);
   }
-
   isPrivatePresenceEntity(entityId: string): boolean {
     return this.#privatePresenceEntityIds.has(entityId);
   }
 
+  #authorized(entities: readonly P1SharedEntity[]): readonly P1SharedEntity[] {
+    return entities.filter((entity) => !this.isPrivatePresenceEntity(entity.id));
+  }
+
+  #replace(
+    subscriber: Subscriber, selector: SubscriptionSelector,
+    snapshot: { readonly baseSeq: number; readonly entities: readonly P1SharedEntity[] },
+    ref: string, completed: (terminal: SubscriptionAppliedMessage) => void,
+  ): void {
+    if (!subscriber.active) throw new P1StoreError("invalid_state", "Subscriber is closed.");
+    const entities = this.#authorized(snapshot.entities);
+    if (entities.length + 1 > P1_LIMITS.maxVisibleEntitiesPerConnection) {
+      throw new P1StoreError("resource_limit", "Replacement effective view exceeds maxVisibleEntitiesPerConnection.");
+    }
+    const subscriptionId = `subscription:${randomUUID()}`;
+    const terminal: SubscriptionAppliedMessage = {
+      ...this.#envelope(), type: "subscription.applied",
+      body: { ref, previousSubscriptionId: subscriber.subscriptionId, subscriptionId,
+        baseRealmSeq: snapshot.baseSeq, effectiveSubscription: selector },
+    };
+    const view = new Set(entities.map((entity) => entity.id));
+    const messages: SessionServerMessage[] = [terminal];
+    for (const entityId of subscriber.view) {
+      if (!view.has(entityId)) messages.push({
+        ...this.#envelope(), type: "view.entity.leave", seq: snapshot.baseSeq,
+        body: { subscriptionId, reason: "subscription", entityId },
+      });
+    }
+    for (const entity of entities) {
+      if (!subscriber.view.has(entity.id)) messages.push({
+        ...this.#envelope(), type: "view.entity.enter", seq: snapshot.baseSeq,
+        body: { subscriptionId, reason: "subscription", entity },
+      });
+    }
+    // Capture canonical state now, never read the store from an asynchronously executing batch.
+    if (this.#enqueue(subscriber, messages, () => this.#options.beforeTransitionEnqueue?.(subscriptionId), () => completed(terminal))) {
+      subscriber.selector = selector;
+      subscriber.subscriptionId = subscriptionId;
+      subscriber.view = view;
+    }
+  }
+
   publish(mutation: CommittedWorldMutation): void {
-    const subscribers = [...this.#subscribers];
-    const task = this.#tail.then(async () => {
+    for (const subscriber of this.#subscribers) {
+      if (!subscriber.active || mutation.seq <= subscriber.baseSeq || this.isPrivatePresenceEntity(mutation.entity.id)) continue;
       try {
-        await this.#options.beforeMutationEnqueue?.(mutation.seq);
-      } catch {
-        for (const subscriber of subscribers) this.#disconnect(subscriber, "canonical publication queue failed");
-        return;
-      }
-      for (const subscriber of subscribers) {
-        if (!subscriber.active) continue;
-        try {
-          const message = project(mutation, subscriber.selector, subscriber.subscriptionId, this.#realmEpoch);
-          if (message === null) continue;
-          subscriber.deliver(message);
-        } catch {
-          this.#disconnect(subscriber, "failed to project or enqueue canonical P1 publication");
+        const message = this.#project(mutation, subscriber);
+        if (message === null) continue;
+        const grows = message.type === "entity.created" || message.type === "view.entity.enter";
+        if (grows && !subscriber.view.has(mutation.entity.id) && subscriber.view.size + 2 > P1_LIMITS.maxVisibleEntitiesPerConnection) {
+          this.#resourceFailure(subscriber, "Live effective view exceeds maxVisibleEntitiesPerConnection.");
+          continue;
         }
+        if (!this.#enqueue(subscriber, [message], () => this.#options.beforeMutationEnqueue?.(mutation.seq))) continue;
+        if (message.type === "entity.deleted" || message.type === "view.entity.leave") subscriber.view.delete(mutation.entity.id);
+        else subscriber.view.add(mutation.entity.id);
+      } catch {
+        this.#disconnect(subscriber, "failed to project canonical P1 publication");
       }
-    });
-    this.#tail = task.catch(() => undefined);
+    }
   }
 
+  #envelope() {
+    return { hvtp: HVTP_VERSION, id: `pub:${randomUUID()}`, realm: P1_REALM_ID, realmEpoch: this.#realmEpoch } as const;
+  }
+  #project(mutation: CommittedWorldMutation, subscriber: Subscriber): CanonicalPublicationMessage | null {
+    const envelope = { ...this.#envelope(), seq: mutation.seq };
+    const subscriptionId = subscriber.subscriptionId;
+    const wasVisible = subscriber.view.has(mutation.entity.id);
+    if (mutation.kind === "deleted") {
+      return wasVisible ? { ...envelope, type: "entity.deleted", body: { subscriptionId, entityId: mutation.entity.id } } : null;
+    }
+    const isVisible = entitySelectedBy(mutation.entity, subscriber.selector);
+    if (mutation.kind === "created") {
+      return isVisible ? { ...envelope, type: "entity.created", body: { subscriptionId, entity: mutation.entity } } : null;
+    }
+    if (!wasVisible && !isVisible) return null;
+    if (!wasVisible) return { ...envelope, type: "view.entity.enter", body: { subscriptionId, reason: "interest", entity: mutation.entity } };
+    if (!isVisible) return { ...envelope, type: "view.entity.leave", body: { subscriptionId, reason: "interest", entityId: mutation.entity.id } };
+    return { ...envelope, type: "component.updated", body: {
+      subscriptionId, entityId: mutation.entity.id, component: mutation.component, value: mutation.entity.components[mutation.component],
+    } };
+  }
+
+  #enqueue(subscriber: Subscriber, messages: readonly SessionServerMessage[], before?: Batch["before"], completed?: () => void): boolean {
+    if (!subscriber.active) return false;
+    const bytes = messages.reduce((total, message) => total + Buffer.byteLength(JSON.stringify(message), "utf8"), 0);
+    if (bytes > P1_LIMITS.maxQueuedOutboundBytes - subscriber.queuedBytes) {
+      this.#resourceFailure(subscriber, "Subscriber transition/catch-up buffer exceeds maxQueuedOutboundBytes.");
+      return false;
+    }
+    subscriber.queuedBytes += bytes;
+    subscriber.batches.push({ messages, bytes, ...(before === undefined ? {} : { before }), ...(completed === undefined ? {} : { completed }) });
+    if (!subscriber.running) {
+      subscriber.running = true;
+      // Begin on the next microtask so planning state and handles are installed before delivery.
+      const work = Promise.resolve().then(() => this.#pump(subscriber));
+      this.#work.add(work);
+      void work.finally(() => this.#work.delete(work));
+    }
+    return true;
+  }
+  async #pump(subscriber: Subscriber): Promise<void> {
+    try {
+      while (subscriber.active && subscriber.batches.length > 0) {
+        const batch = subscriber.batches.shift()!;
+        const barrier = batch.before?.();
+        if (barrier !== undefined) await waitOrClosed(barrier, subscriber.abort.signal);
+        if (!subscriber.active) break;
+        for (const message of batch.messages) subscriber.deliver(message);
+        subscriber.queuedBytes -= batch.bytes;
+        batch.completed?.();
+      }
+    } catch {
+      this.#disconnect(subscriber, "failed to enqueue P1 subscriber batch; reconnect for a fresh snapshot");
+    } finally {
+      subscriber.running = false;
+    }
+  }
   async drain(): Promise<void> {
-    await this.#tail;
+    while (this.#work.size > 0) await Promise.all(this.#work);
   }
-
+  #remove(subscriber: Subscriber): void {
+    subscriber.active = false;
+    subscriber.abort.abort();
+    subscriber.batches.length = 0;
+    subscriber.queuedBytes = 0;
+    subscriber.view.clear();
+    this.#subscribers.delete(subscriber);
+  }
+  #resourceFailure(subscriber: Subscriber, message: string): void {
+    try {
+      subscriber.deliver({ ...this.#envelope(), type: "error", body: { ref: null, code: "resource_limit", message } });
+    } catch { /* Closing is sufficient when the transport cannot enqueue an error. */ }
+    this.#disconnect(subscriber, "P1 subscriber resource limit; reconnect with a narrower view");
+  }
   #disconnect(subscriber: Subscriber, reason: string): void {
     if (!subscriber.active) return;
-    subscriber.active = false;
-    this.#subscribers.delete(subscriber);
+    this.#remove(subscriber);
     subscriber.close(1011, reason);
   }
 }
 
-function project(
-  mutation: CommittedWorldMutation,
-  selector: SubscriptionSelector,
-  subscriptionId: string,
-  realmEpoch: string,
-): CanonicalPublicationMessage | null {
-  const envelope = {
-    hvtp: HVTP_VERSION,
-    id: `pub:${randomUUID()}`,
-    realm: P1_REALM_ID,
-    realmEpoch,
-    seq: mutation.seq,
-  } as const;
-  if (mutation.kind === "created") {
-    if (!entitySelectedBy(mutation.entity, selector)) return null;
-    return { ...envelope, type: "entity.created", body: { subscriptionId, entity: mutation.entity } };
-  } else if (mutation.kind === "deleted") {
-    if (!entitySelectedBy(mutation.entity, selector)) return null;
-    return { ...envelope, type: "entity.deleted", body: { subscriptionId, entityId: mutation.entity.id } };
-  } else {
-    const wasVisible = entitySelectedBy(mutation.before, selector);
-    const isVisible = entitySelectedBy(mutation.entity, selector);
-    if (!wasVisible && !isVisible) return null;
-    if (!wasVisible) {
-      return {
-        ...envelope,
-        type: "view.entity.enter",
-        body: { subscriptionId, reason: "interest", entity: mutation.entity },
-      };
-    }
-    if (!isVisible) {
-      return {
-        ...envelope,
-        type: "view.entity.leave",
-        body: { subscriptionId, reason: "interest", entityId: mutation.entity.id },
-      };
-    }
-    return {
-      ...envelope,
-      type: "component.updated",
-      body: {
-        subscriptionId,
-        entityId: mutation.entity.id,
-        component: mutation.component,
-        value: mutation.entity.components[mutation.component],
-      },
-    };
-  }
+async function waitOrClosed(barrier: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  let closed!: () => void;
+  const cancellation = new Promise<void>((resolve) => { closed = resolve; });
+  signal.addEventListener("abort", closed, { once: true });
+  try { await Promise.race([barrier, cancellation]); }
+  finally { signal.removeEventListener("abort", closed); }
 }

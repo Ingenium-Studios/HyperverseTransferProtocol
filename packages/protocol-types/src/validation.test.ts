@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseJsonRequest, parseRealmJoin, parseSessionHello } from "./index.js";
+import { parseJsonRequest, parseRealmJoin, parseSessionHello, parseSubscriptionSet } from "./index.js";
 
 const hello = {
   hvtp: "0.2",
@@ -175,4 +175,26 @@ test("parseRealmJoin enforces explicit entity ID count", () => {
   }));
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.error.code, "resource_limit");
+});
+
+test("subscription.set reuses realm.join selector validation and preserves the closed wire envelope", () => {
+  const request = { hvtp: "0.2", id: "replace", type: "subscription.set", realm: "urn:hvtp:realm:prototype-world", body: {} };
+  for (const selector of [{}, { entities: [] }, { spatial: { center: [0, 0, 0], radius: 0 }, entities: ["E"] }]) {
+    const parsed = parseSubscriptionSet(JSON.stringify({ ...request, body: selector }));
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) assert.deepEqual(parsed.value.body, selector);
+  }
+  for (const selector of [null, [], { extra: true }, { entities: ["E", 3] }, { entities: Array(257).fill("E") },
+    { spatial: { center: [0, 0], radius: 0 } }, { spatial: { center: [0, 0, 0], radius: -1 } },
+    { spatial: { center: [0, 0, 0], radius: 501 } }]) {
+    const replaced = parseSubscriptionSet(JSON.stringify({ ...request, body: selector }));
+    const joined = parseRealmJoin(JSON.stringify({ hvtp: "0.2", id: "join", type: "realm.join", body: { realm: request.realm, subscription: selector } }));
+    assert.equal(replaced.ok, false); assert.equal(joined.ok, false);
+    if (!replaced.ok && !joined.ok) { assert.equal(replaced.error.code, joined.error.code); assert.equal(replaced.error.ref, "replace"); }
+  }
+  for (const [overrides, code] of [[{ unexpected: true }, "invalid_message"], [{ realm: "other" }, "realm_not_found"],
+    [{ hvtp: "0.1" }, "unsupported_version"], [{ type: "other" }, "invalid_message"]] as const) {
+    const result = parseSubscriptionSet(JSON.stringify({ ...request, ...overrides }));
+    assert.equal(result.ok, false); if (!result.ok) assert.equal(result.error.code, code);
+  }
 });
