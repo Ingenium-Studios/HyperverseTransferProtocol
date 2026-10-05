@@ -110,6 +110,9 @@ test("reference host serves the checked-in P1 unit cube fixture", async () => {
     });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "model/gltf+json");
+    // Cross-origin browser clients may read the public credential-free fixture.
+    assert.equal(response.headers.get("access-control-allow-origin"), "*");
+    assert.equal(response.headers.get("access-control-allow-credentials"), null);
 
     const fixture = (await response.json()) as {
       nodes?: Array<{ name?: string }>;

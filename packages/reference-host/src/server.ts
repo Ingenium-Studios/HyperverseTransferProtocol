@@ -83,7 +83,10 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
         else res.destroy();
       });
       stream.once("open", () => {
+        // The public conformance fixture is credential-free; a wildcard origin lets a browser client served from
+        // another (dev-server) origin read it. Delivery detail only, not protocol semantics.
         res.writeHead(200, {
+          "access-control-allow-origin": "*",
           "content-type": "model/gltf+json",
           "content-length": stat.size,
           "cache-control": "no-store",
