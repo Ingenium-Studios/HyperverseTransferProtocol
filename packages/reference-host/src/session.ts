@@ -28,6 +28,8 @@ import {
   type SessionWelcomeMessage,
   type SubscriptionSelector,
 } from "@hvtp/protocol-types";
+import { defaultClock, SlidingWindowRateLimiter, type MonotonicClock } from "./rate-limiter.js";
+import type { P1OutboundChannel } from "./outbound.js";
 import { P1RealmCoordinator, type P1Subscriber } from "./realm-coordinator.js";
 import { P1CommitOutcomeUnknown, P1StoreError, type MutableP1Component } from "./world-store.js";
 
@@ -83,7 +85,10 @@ export class P1Session {
   #unregisterPresenceEntity: (() => void) | null = null;
   #subscriber: P1Subscriber | null = null;
   readonly #realmCoordinator: P1RealmCoordinator | undefined;
-  readonly #deliverCanonical: ((message: SessionServerMessage) => void) | undefined;
+  readonly #outbound: P1OutboundChannel | undefined;
+  readonly #now: MonotonicClock;
+  readonly #requestLimiter = new SlidingWindowRateLimiter(P1_LIMITS.maxClientRequestsPerSecond);
+  readonly #mutationLimiter = new SlidingWindowRateLimiter(P1_LIMITS.maxMutationRequestsPerSecond);
   readonly #closeTransport: ((code: number, reason: string) => void) | undefined;
   readonly #afterDurableCommit: (() => void) | undefined;
   readonly #requestTable = new Map<string, { readonly content: string; terminal?: SessionServerMessage }>();
@@ -95,7 +100,8 @@ export class P1Session {
     worldView: P1WorldView = EMPTY_WORLD_VIEW,
     options: {
       readonly realmCoordinator?: P1RealmCoordinator;
-      readonly deliverCanonical?: (message: SessionServerMessage) => void;
+      readonly outbound?: P1OutboundChannel;
+      readonly now?: MonotonicClock;
       readonly closeTransport?: (code: number, reason: string) => void;
       readonly afterDurableCommit?: () => void;
     } = {},
@@ -106,7 +112,8 @@ export class P1Session {
     this.#realmEpoch = realmEpoch;
     this.#worldView = worldView;
     this.#realmCoordinator = options.realmCoordinator;
-    this.#deliverCanonical = options.deliverCanonical;
+    this.#outbound = options.outbound;
+    this.#now = options.now ?? defaultClock;
     this.#closeTransport = options.closeTransport;
     this.#afterDurableCommit = options.afterDurableCommit;
   }
@@ -122,9 +129,17 @@ export class P1Session {
     this.#subscriber = null;
     this.#unregisterPresenceEntity?.();
     this.#unregisterPresenceEntity = null;
+    this.#requestLimiter.clear();
+    this.#mutationLimiter.clear();
   }
 
   handleText(text: string): SessionDispatch {
+    // Every physical request, however malformed, spends general request budget before any other work.
+    if (!this.#requestLimiter.tryAcquire(this.#now())) {
+      const limited = parseJsonRequest(text);
+      const ref = limited.ok ? (limited.value.id as string) : limited.error.ref;
+      return this.#dispatch(this.#error("resource_limit", ref, "Client request rate limit exceeded."));
+    }
     const generic = parseJsonRequest(text);
     if (!generic.ok) return this.#dispatch(this.#error(generic.error.code, generic.error.ref, generic.error.message));
 
@@ -292,10 +307,10 @@ export class P1Session {
         this.#state = "JOINED";
       }
     };
-    if (this.#realmCoordinator !== undefined && this.#deliverCanonical !== undefined && this.#closeTransport !== undefined) {
+    if (this.#realmCoordinator !== undefined && this.#outbound !== undefined && this.#closeTransport !== undefined) {
       this.#unregisterPresenceEntity = this.#realmCoordinator.registerPresenceEntity(presenceEntityId);
       const subscriber = this.#realmCoordinator.subscribe(
-        effectiveSubscription, subscriptionId, durableSnapshot, messages, this.#deliverCanonical,
+        effectiveSubscription, subscriptionId, durableSnapshot, messages, this.#outbound,
         (code, reason) => { this.close(); this.#closeTransport?.(code, reason); }, afterEnqueue,
       );
       if (this.state === "CLOSED") subscriber.unsubscribe();
@@ -343,6 +358,11 @@ export class P1Session {
     }
     if (this.#pendingRequests >= P1_LIMITS.maxPendingStateChangingRequests) {
       return this.#dispatch(this.#error("resource_limit", ref, "Too many pending state-changing requests."));
+    }
+
+    // Checked after dedup lookup and capacity, before reservation: a refused request reserves nothing.
+    if (parsedRequest.type !== "subscription.set" && !this.#mutationLimiter.tryAcquire(this.#now())) {
+      return this.#dispatch(this.#error("resource_limit", ref, "Durable mutation request rate limit exceeded."));
     }
 
     const reservation: { content: string; terminal?: SessionServerMessage } = { content };

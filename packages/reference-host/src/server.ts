@@ -4,8 +4,11 @@ import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
-import { P1_LIMITS } from "@hvtp/protocol-types";
+import { P1_LIMITS, type SessionServerMessage } from "@hvtp/protocol-types";
 import { P1Session } from "./session.js";
+import { P1OutboundChannel } from "./outbound.js";
+import { originForBindHost, validateAssetOrigin } from "./origin.js";
+import type { MonotonicClock } from "./rate-limiter.js";
 import { P1WorldStore } from "./world-store.js";
 import type { P1WorldStoreOptions } from "./world-store.js";
 import { P1RealmCoordinator, type P1RealmCoordinatorOptions } from "./realm-coordinator.js";
@@ -18,8 +21,20 @@ export interface ReferenceHostOptions {
   readonly databasePath?: string;
   readonly worldStoreOptions?: P1WorldStoreOptions;
   readonly realmCoordinatorOptions?: P1RealmCoordinatorOptions;
+  /** Monotonic clock for per-connection request-rate limiters; defaults to `performance.now`. */
+  readonly clock?: MonotonicClock;
+  /** Test seam: replaces the WebSocket write so completion can be delayed or failed deterministically. */
+  readonly sendTransport?: (socket: WebSocket, data: string, done: (error?: Error | null) => void) => void;
+  /** Test seam: observes each accepted connection and its outbound channel. */
+  readonly onConnection?: (connection: ReferenceConnection) => void;
   /** Test seam after durable commit/publication admission but before requester response. */
   readonly afterDurableCommit?: () => void;
+}
+
+export interface ReferenceConnection {
+  readonly socket: WebSocket;
+  readonly session: P1Session;
+  readonly channel: P1OutboundChannel;
 }
 
 export interface ReferenceHost {
@@ -38,6 +53,8 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
   const requestedPort = options.port ?? 0;
   const defaultFixture = resolve(dirname(fileURLToPath(import.meta.url)), "../../../protocol-spec/fixtures/unit-cube.gltf");
   const fixturePath = options.fixturePath ?? defaultFixture;
+  // HTTPS is required outside loopback/local development; reject before binding or opening the store.
+  validateAssetOrigin(options.publicOrigin ?? originForBindHost(host));
   const databasePath =
     options.databasePath ??
     process.env.HVTP_DB_PATH ??
@@ -46,17 +63,33 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
 
   const server = createServer((req, res) => {
     if (req.method === "GET" && req.url === "/assets/p1/unit-cube.gltf") {
-      const stat = statSync(fixturePath);
+      let stat;
+      try {
+        stat = statSync(fixturePath);
+      } catch {
+        res.writeHead(404).end();
+        return;
+      }
       if (stat.size > P1_LIMITS.maxAssetBytes) {
         res.writeHead(413).end();
         return;
       }
-      res.writeHead(200, {
-        "content-type": "model/gltf+json",
-        "content-length": stat.size,
-        "cache-control": "no-store",
+      // Commit headers only once the file is open; any open/read failure must never surface as an
+      // unhandled 'error' event.
+      const stream = createReadStream(fixturePath);
+      res.once("close", () => stream.destroy());
+      stream.on("error", () => {
+        if (!res.headersSent) res.writeHead(404).end();
+        else res.destroy();
       });
-      createReadStream(fixturePath).pipe(res);
+      stream.once("open", () => {
+        res.writeHead(200, {
+          "content-type": "model/gltf+json",
+          "content-length": stat.size,
+          "cache-control": "no-store",
+        });
+        stream.pipe(res);
+      });
       return;
     }
     res.writeHead(404).end();
@@ -76,24 +109,31 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("Reference host did not bind a TCP port.");
   const port = address.port;
-  const origin = options.publicOrigin ?? `http://${host}:${port}`;
+  const origin = options.publicOrigin ?? originForBindHost(host, port);
   const assetBaseUri = new URL("/assets/p1/", origin).toString();
   const realmEpoch = `epoch:${randomUUID()}`;
   const realmCoordinator = new P1RealmCoordinator(realmEpoch, options.realmCoordinatorOptions);
 
   wsServer.on("connection", (socket) => {
+    const send = options.sendTransport ?? ((target, data, done) => target.send(data, (error) => done(error)));
+    const closeConnection = (code: number, reason: string): void => {
+      session.close();
+      channel.dispose();
+      socket.close(code, reason);
+    };
+    const channel = new P1OutboundChannel(
+      { isOpen: () => socket.readyState === WebSocket.OPEN, send: (data, done) => send(socket, data, done) },
+      () => closeConnection(1011, "failed to send P1 output"),
+    );
     const session = new P1Session(assetBaseUri, realmEpoch, worldStore, {
       realmCoordinator,
-      deliverCanonical: (message) => {
-        if (socket.readyState !== WebSocket.OPEN) throw new Error("Subscriber transport is closed.");
-        socket.send(JSON.stringify(message), (error) => {
-          if (error != null) { session.close(); socket.close(1011, "failed to enqueue P1 subscriber output"); }
-        });
-      },
-      closeTransport: (code, reason) => socket.close(code, reason),
+      outbound: channel,
+      closeTransport: closeConnection,
+      ...(options.clock === undefined ? {} : { now: options.clock }),
       ...(options.afterDurableCommit === undefined ? {} : { afterDurableCommit: options.afterDurableCommit }),
     });
-    bindSocket(socket, session);
+    bindSocket(socket, session, channel, closeConnection);
+    options.onConnection?.({ socket, session, channel });
   });
 
   return {
@@ -113,21 +153,33 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
   };
 }
 
-function bindSocket(socket: WebSocket, session: P1Session): void {
+function bindSocket(
+  socket: WebSocket,
+  session: P1Session,
+  channel: P1OutboundChannel,
+  closeConnection: (code: number, reason: string) => void,
+): void {
   const decoder = new TextDecoder("utf-8", { fatal: true });
+
+  // Direct responses compete with coordinator output for the same per-connection byte budget. The exact
+  // computed response is sent or the connection is closed; a substitute response is never sent, because the
+  // session state machine and request-ID terminal cache already reflect the original response.
+  const sendDirect = (message: SessionServerMessage): boolean => {
+    if (channel.trySend(message)) return true;
+    closeConnection(1011, "P1 outbound buffer limit reached; reconnect for a fresh snapshot");
+    return false;
+  };
 
   socket.on("message", (data: RawData, isBinary: boolean) => {
     if (socket.readyState !== WebSocket.OPEN) return;
     if (isBinary) {
-      socket.close(1003, "P1 requires JSON text messages");
-      session.close();
+      closeConnection(1003, "P1 requires JSON text messages");
       return;
     }
 
     const bytes = rawDataBytes(data);
     if (bytes.byteLength > P1_LIMITS.maxMessageBytes) {
-      socket.close(1009, "message exceeds P1 maxMessageBytes");
-      session.close();
+      closeConnection(1009, "message exceeds P1 maxMessageBytes");
       return;
     }
 
@@ -135,8 +187,7 @@ function bindSocket(socket: WebSocket, session: P1Session): void {
     try {
       text = decoder.decode(bytes);
     } catch {
-      socket.close(1007, "invalid UTF-8 text message");
-      session.close();
+      closeConnection(1007, "invalid UTF-8 text message");
       return;
     }
 
@@ -144,21 +195,29 @@ function bindSocket(socket: WebSocket, session: P1Session): void {
     try {
       dispatch = session.handleText(text);
     } catch {
-      session.close();
-      socket.close(1011, "P1 world-state failure");
+      closeConnection(1011, "P1 world-state failure");
       return;
     }
 
     try {
-      for (const message of dispatch.messages) socket.send(JSON.stringify(message));
+      for (const message of dispatch.messages) if (!sendDirect(message)) return;
       dispatch.afterEnqueue?.();
     } catch {
-      session.close();
-      socket.close(1011, "failed to enqueue P1 response");
+      closeConnection(1011, "failed to enqueue P1 response");
     }
   });
 
-  socket.on("close", () => session.close());
+  // ws closes the connection itself (1009 oversize, 1007 invalid UTF-8) and then emits 'error'; an unhandled
+  // 'error' event would crash the host process, so release connection state and swallow it.
+  socket.on("error", () => {
+    session.close();
+    channel.dispose();
+  });
+
+  socket.on("close", () => {
+    session.close();
+    channel.dispose();
+  });
 }
 
 function rawDataBytes(data: RawData): Uint8Array {

@@ -4,6 +4,7 @@ import {
   type CanonicalPublicationMessage, type P1SharedEntity,
   type SessionServerMessage, type SubscriptionAppliedMessage, type SubscriptionSelector,
 } from "@hvtp/protocol-types";
+import type { P1OutboundChannel } from "./outbound.js";
 import { entitySelectedBy, P1StoreError, type MutableP1Component } from "./world-store.js";
 
 export type CommittedWorldMutation =
@@ -19,9 +20,9 @@ export interface P1RealmCoordinatorOptions {
   readonly beforeTransitionEnqueue?: (subscriptionId: string) => Promise<void>;
 }
 
+interface Payload { readonly text: string; readonly bytes: number }
 interface Batch {
-  readonly messages: readonly SessionServerMessage[];
-  readonly bytes: number;
+  readonly payloads: readonly Payload[];
   readonly before?: () => Promise<void> | undefined;
   readonly completed?: () => void;
 }
@@ -31,10 +32,11 @@ interface Subscriber {
   subscriptionId: string;
   view: Set<string>;
   readonly baseSeq: number;
-  readonly deliver: (message: SessionServerMessage) => void;
+  readonly channel: P1OutboundChannel;
   readonly close: (code: number, reason: string) => void;
   readonly batches: Batch[];
   readonly abort: AbortController;
+  /** Bytes reserved on the connection budget but not yet handed to the transport. */
   queuedBytes: number;
   running: boolean;
   active: boolean;
@@ -66,13 +68,13 @@ export class P1RealmCoordinator {
     subscriptionId: string,
     snapshot: { readonly baseSeq: number; readonly entities: readonly P1SharedEntity[] },
     messages: readonly SessionServerMessage[],
-    deliver: (message: SessionServerMessage) => void,
+    channel: P1OutboundChannel,
     close: (code: number, reason: string) => void,
     completed: () => void,
   ): P1Subscriber {
     const subscriber: Subscriber = {
       selector, subscriptionId, view: new Set(this.#authorized(snapshot.entities).map((entity) => entity.id)),
-      baseSeq: snapshot.baseSeq, deliver, close, batches: [], abort: new AbortController(), queuedBytes: 0, running: false, active: true,
+      baseSeq: snapshot.baseSeq, channel, close, batches: [], abort: new AbortController(), queuedBytes: 0, running: false, active: true,
     };
     this.#subscribers.add(subscriber);
     this.#enqueue(subscriber, messages, () => this.#options.beforeSnapshotEnqueue?.(subscriptionId), completed);
@@ -80,6 +82,14 @@ export class P1RealmCoordinator {
       unsubscribe: () => this.#remove(subscriber),
       replace: (selector, snapshot, ref, completed) => this.#replace(subscriber, selector, snapshot, ref, completed),
     };
+  }
+
+  get subscriberCount(): number {
+    return this.#subscribers.size;
+  }
+
+  get privatePresenceCount(): number {
+    return this.#privatePresenceEntityIds.size;
   }
 
   registerPresenceEntity(entityId: string): () => void {
@@ -176,13 +186,18 @@ export class P1RealmCoordinator {
 
   #enqueue(subscriber: Subscriber, messages: readonly SessionServerMessage[], before?: Batch["before"], completed?: () => void): boolean {
     if (!subscriber.active) return false;
-    const bytes = messages.reduce((total, message) => total + Buffer.byteLength(JSON.stringify(message), "utf8"), 0);
-    if (bytes > P1_LIMITS.maxQueuedOutboundBytes - subscriber.queuedBytes) {
-      this.#resourceFailure(subscriber, "Subscriber transition/catch-up buffer exceeds maxQueuedOutboundBytes.");
+    const payloads = messages.map((message) => {
+      const text = JSON.stringify(message);
+      return { text, bytes: Buffer.byteLength(text, "utf8") };
+    });
+    const bytes = payloads.reduce((total, payload) => total + payload.bytes, 0);
+    // One connection-wide budget shared with direct responses and transport-pending sends.
+    if (!subscriber.channel.reserve(bytes)) {
+      this.#resourceFailure(subscriber, "Connection outbound buffers exceed maxQueuedOutboundBytes.");
       return false;
     }
     subscriber.queuedBytes += bytes;
-    subscriber.batches.push({ messages, bytes, ...(before === undefined ? {} : { before }), ...(completed === undefined ? {} : { completed }) });
+    subscriber.batches.push({ payloads, ...(before === undefined ? {} : { before }), ...(completed === undefined ? {} : { completed }) });
     if (!subscriber.running) {
       subscriber.running = true;
       // Begin on the next microtask so planning state and handles are installed before delivery.
@@ -199,8 +214,13 @@ export class P1RealmCoordinator {
         const barrier = batch.before?.();
         if (barrier !== undefined) await waitOrClosed(barrier, subscriber.abort.signal);
         if (!subscriber.active) break;
-        for (const message of batch.messages) subscriber.deliver(message);
-        subscriber.queuedBytes -= batch.bytes;
+        for (const payload of batch.payloads) {
+          if (!subscriber.active) break;
+          // Reservation ownership moves to the channel, which releases it when the transport completes.
+          subscriber.queuedBytes -= payload.bytes;
+          subscriber.channel.sendReserved(payload.text, payload.bytes);
+        }
+        if (!subscriber.active) break;
         batch.completed?.();
       }
     } catch {
@@ -216,13 +236,14 @@ export class P1RealmCoordinator {
     subscriber.active = false;
     subscriber.abort.abort();
     subscriber.batches.length = 0;
+    if (subscriber.queuedBytes > 0) subscriber.channel.release(subscriber.queuedBytes);
     subscriber.queuedBytes = 0;
     subscriber.view.clear();
     this.#subscribers.delete(subscriber);
   }
   #resourceFailure(subscriber: Subscriber, message: string): void {
     try {
-      subscriber.deliver({ ...this.#envelope(), type: "error", body: { ref: null, code: "resource_limit", message } });
+      subscriber.channel.trySend({ ...this.#envelope(), type: "error", body: { ref: null, code: "resource_limit", message } });
     } catch { /* Closing is sufficient when the transport cannot enqueue an error. */ }
     this.#disconnect(subscriber, "P1 subscriber resource limit; reconnect with a narrower view");
   }

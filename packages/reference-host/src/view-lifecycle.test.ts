@@ -75,7 +75,10 @@ class Peer {
   }
 }
 async function fixture(options: ReferenceHostOptions = {}) {
-  const host = await createReferenceHost({ ...options, databasePath: ":memory:" });
+  // These tests exercise table/view limits, not rate limits: a deterministic clock that ticks 20ms per
+  // call keeps every connection under both request-rate limits (rate behavior has its own tests).
+  let tick = 0;
+  const host = await createReferenceHost({ clock: () => (tick += 20), ...options, databasePath: ":memory:" });
   const peers: Peer[] = [];
   return {
     host,
@@ -364,7 +367,8 @@ test("C21 snapshot catch-up payload overflow disconnects only affected peer and 
       f.host.realmCoordinator.publish({ kind: "updated", before, entity: result.entity, seq: result.seq, component: "hvtp.transform@1" });
     }
     assert.equal(await a.closed, 1011);
-    const error = await a.next(); assert.equal(error.body.code, "resource_limit"); assert.equal(error.body.ref, null);
+    // The resource_limit error is itself budgeted: it is sent only when it still fits, otherwise close alone suffices.
+    for (const error of a.messages) { assert.equal(error.type, "error"); assert.equal(error.body.code, "resource_limit"); assert.equal(error.body.ref, null); }
     assert.equal(b.socket.readyState, WebSocket.OPEN);
     // drain must finish despite an unreleased snapshot barrier on a closed connection.
     await f.host.realmCoordinator.drain();
