@@ -250,3 +250,62 @@ test("connection close releases reservations, coordinator work, subscription sta
     await host.close();
   }
 });
+
+test("B1: if the exact session.welcome cannot be admitted the connection closes; no substitute error, never left NEGOTIATED", async () => {
+  const seam = newSeam();
+  const host = await createReferenceHost({
+    ...seamOptions(seam),
+    // Exhaust the connection budget before the first request is handled.
+    onConnection: (connection) => { seam.connections.push(connection); assert.equal(connection.channel.reserve(LIMIT), true); },
+  });
+  try {
+    const peer = await connect(host);
+    peer.send(helloMessage());
+    assert.equal(await peer.closed, 1011);
+    assert.deepEqual(peer.messages, [], "nothing, in particular no substitute resource_limit, was sent");
+    const connection = seam.connections[0]!;
+    assert.equal(connection.session.state, "CLOSED");
+    assert.equal(connection.channel.queuedBytes, 0);
+  } finally {
+    await host.close();
+  }
+});
+
+test("B1: a computed terminal error or committed ACK that cannot fit closes the connection and is never replaced", async () => {
+  const seam = newSeam();
+  const host = await createReferenceHost(seamOptions(seam));
+  try {
+    const bad = JSON.stringify({ ...subscriptionMessage("sub", {}), body: { extra: true } });
+    const peers = [];
+    for (let i = 0; i < 2; i++) {
+      const peer = await connect(host);
+      await peer.hello(); await peer.join({});
+      peers.push(peer);
+    }
+    // Peer 0: admitted request whose terminal is an error that no longer fits.
+    const first = seam.connections[0]!.channel;
+    assert.equal(first.reserve(LIMIT - first.queuedBytes), true);
+    peers[0]!.send(bad);
+    assert.equal(await peers[0]!.closed, 1011);
+    assert.deepEqual(peers[0]!.messages, []);
+    assert.equal(seam.connections[0]!.session.state, "CLOSED");
+
+    // Peer 1: committed durable mutation whose exact ACK no longer fits. State stays committed.
+    const second = seam.connections[1]!.channel;
+    assert.equal(second.reserve(LIMIT - second.queuedBytes), true);
+    peers[1]!.send(JSON.stringify({
+      hvtp: "0.2", id: "req-ack", type: "entity.create", realm: P1_REALM_ID,
+      body: { entity: { id: "E-ack", components: {
+        "hvtp.transform@1": { state: cubeInput("E-ack").transform },
+        "hvtp.renderable@1": { state: cubeInput("E-ack").renderable },
+        "hvtp.material@1": { state: cubeInput("E-ack").material },
+      } } },
+    }));
+    assert.equal(await peers[1]!.closed, 1011);
+    assert.deepEqual(peers[1]!.messages, []);
+    assert.notEqual(host.worldStore.getEntity("E-ack"), null);
+    assert.equal(host.worldStore.getRealmSeq(), 1);
+  } finally {
+    await host.close();
+  }
+});

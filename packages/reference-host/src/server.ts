@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
-import { P1_LIMITS, type ErrorMessage, type SessionServerMessage } from "@hvtp/protocol-types";
+import { P1_LIMITS, type SessionServerMessage } from "@hvtp/protocol-types";
 import { P1Session } from "./session.js";
 import { P1OutboundChannel } from "./outbound.js";
 import { originForBindHost, validateAssetOrigin } from "./origin.js";
@@ -74,12 +74,22 @@ export async function createReferenceHost(options: ReferenceHostOptions = {}): P
         res.writeHead(413).end();
         return;
       }
-      res.writeHead(200, {
-        "content-type": "model/gltf+json",
-        "content-length": stat.size,
-        "cache-control": "no-store",
+      // Commit headers only once the file is open; any open/read failure must never surface as an
+      // unhandled 'error' event.
+      const stream = createReadStream(fixturePath);
+      res.once("close", () => stream.destroy());
+      stream.on("error", () => {
+        if (!res.headersSent) res.writeHead(404).end();
+        else res.destroy();
       });
-      createReadStream(fixturePath).pipe(res);
+      stream.once("open", () => {
+        res.writeHead(200, {
+          "content-type": "model/gltf+json",
+          "content-length": stat.size,
+          "cache-control": "no-store",
+        });
+        stream.pipe(res);
+      });
       return;
     }
     res.writeHead(404).end();
@@ -151,21 +161,13 @@ function bindSocket(
 ): void {
   const decoder = new TextDecoder("utf-8", { fatal: true });
 
-  // Direct responses compete with coordinator output for the same per-connection byte budget.
-  const sendDirect = (message: SessionServerMessage): void => {
-    if (channel.trySend(message)) return;
-    // A committed ACK that cannot be delivered leaves the requester's view ambiguous: close.
-    // Otherwise a minimal resource_limit may still fit; if not, close.
-    if (message.type !== "ack") {
-      const ref = message.type === "error" ? message.body.ref : null;
-      const limited: ErrorMessage = {
-        hvtp: message.hvtp, id: `res:${randomUUID()}`, type: "error",
-        ...(message.type === "error" && message.realm !== undefined ? { realm: message.realm, realmEpoch: message.realmEpoch! } : {}),
-        body: { ref, code: "resource_limit", message: "Outbound buffer limit reached." },
-      };
-      if (channel.trySend(limited)) return;
-    }
+  // Direct responses compete with coordinator output for the same per-connection byte budget. The exact
+  // computed response is sent or the connection is closed; a substitute response is never sent, because the
+  // session state machine and request-ID terminal cache already reflect the original response.
+  const sendDirect = (message: SessionServerMessage): boolean => {
+    if (channel.trySend(message)) return true;
     closeConnection(1011, "P1 outbound buffer limit reached; reconnect for a fresh snapshot");
+    return false;
   };
 
   socket.on("message", (data: RawData, isBinary: boolean) => {
@@ -198,7 +200,7 @@ function bindSocket(
     }
 
     try {
-      for (const message of dispatch.messages) sendDirect(message);
+      for (const message of dispatch.messages) if (!sendDirect(message)) return;
       dispatch.afterEnqueue?.();
     } catch {
       closeConnection(1011, "failed to enqueue P1 response");

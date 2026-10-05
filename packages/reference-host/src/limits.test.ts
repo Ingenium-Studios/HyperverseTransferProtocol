@@ -240,3 +240,31 @@ test("HTTPS is required for non-loopback asset origins; loopback HTTP and any HT
     await local.close();
   }
 });
+
+test("asset stream open/read failure never crashes the host", async () => {
+  const dir = mkdtempSync(joinPath(tmpdir(), "hvtp-asset-err-"));
+  // A directory stats fine but cannot be read as a file: open fails (Windows) or read fails after open (POSIX).
+  const host = await createReferenceHost({ databasePath: ":memory:", fixturePath: dir });
+  const uncaught: Error[] = [];
+  const onUncaught = (error: Error): void => { uncaught.push(error); };
+  process.on("uncaughtException", onUncaught);
+  try {
+    const url = `http://${host.host}:${host.port}/assets/p1/unit-cube.gltf`;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const response = await fetch(url, { redirect: "manual" });
+        assert.ok(response.status === 404 || response.status === 200);
+        await response.arrayBuffer();
+      } catch {
+        // Response terminated after headers began: acceptable, as long as the host survives.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20)); // let any stray error event surface
+    assert.deepEqual(uncaught, []);
+    assert.equal((await fetch(`http://${host.host}:${host.port}/nothing`)).status, 404, "host still serving");
+  } finally {
+    process.off("uncaughtException", onUncaught);
+    await host.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
