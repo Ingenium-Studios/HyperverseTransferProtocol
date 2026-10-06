@@ -10,7 +10,7 @@ Each entry should state status clearly (for example: investigated, implemented l
 
 **Status:** process infrastructure in progress on `chore/project-history-reporting`; not released.
 
-A lightweight project-history system was introduced so future Chiefs can reconstruct internal progress separately from public release notes. The repository now distinguishes granular evidence (PRs/issues), technical release history, client-facing release notes, and non-release engineering context.
+A lightweight project-history system was introduced so future Chiefs can reconstruct internal progress separately from public release notes. The repository now distinguishes granular evidence (PRs/issues), technical release history, client-facing release notes, and non-release engineering context. Evidence: [#7](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/7).
 
 The initial history below is explicitly reconstructed from existing PR evidence rather than presented as contemporaneous diary entries.
 
