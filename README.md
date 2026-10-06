@@ -29,6 +29,17 @@ The current working specification is:
 
 The immediate goal is not protocol completeness. It is to build the smallest credible interoperability experiment and learn from real implementation pressure.
 
+### Project history and releases
+
+HVTP keeps a deliberately small reporting system:
+
+- [Technical changelog](./CHANGELOG.md) — developer/operator release history and the current unreleased technical delta.
+- [Release notes](./RELEASE_NOTES.md) — client/user-facing changes suitable as the basis for shipped release notes.
+- [Development journal](./docs/DEVELOPMENT_JOURNAL.md) — significant internal engineering context that should survive beyond individual PRs.
+- [Contributor/agent guidance](./AGENTS.md) — when each history artifact must be updated and how progress/release reports should be reconstructed.
+
+Pull requests and issues remain the granular evidence. GitHub Releases are reserved for real shipped version boundaries; **no GitHub Release has been published yet**.
+
 ---
 
 ## ✨ Core design
