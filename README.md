@@ -29,6 +29,17 @@ The current working specification is:
 
 The immediate goal is not protocol completeness. It is to build the smallest credible interoperability experiment and learn from real implementation pressure.
 
+### Project history and releases
+
+HVTP keeps a deliberately small reporting system:
+
+- [Technical changelog](./CHANGELOG.md) — developer/operator release history and the current unreleased technical delta.
+- [Release notes](./RELEASE_NOTES.md) — client/user-facing changes suitable as the basis for shipped release notes.
+- [Development journal](./docs/DEVELOPMENT_JOURNAL.md) — significant internal engineering context that should survive beyond individual PRs.
+- [Contributor/agent guidance](./AGENTS.md) — when each history artifact must be updated and how progress/release reports should be reconstructed.
+
+Pull requests and issues remain the granular evidence. GitHub Releases are reserved for real shipped version boundaries; **no GitHub Release has been published yet**.
+
 ---
 
 ## ✨ Core design
@@ -225,6 +236,50 @@ That demonstration is **not enough by itself**. P1 also requires adversarial cas
 P1 uses two gates: **Reference Implementation Complete** for the reference host/Three.js/headless stack, followed by **Interoperability Accepted** when a second independently implemented consumer proves the same wire, transform, and lifecycle meaning. Only the second gate freezes P1.
 
 See [Prototype Profile P1](./protocol-spec/prototype-profile.md) and [P1 Conformance Cases](./protocol-spec/p1-conformance.md).
+
+---
+
+## 🧰 Reference implementation status
+
+Implementation has started on the P1 reference stack.
+
+The first six bounded slices currently provide:
+
+- an npm/TypeScript workspace rooted at `/packages`;
+- `@hvtp/protocol-types` with P1 constants, error codes, closed-shape request validation, request-ID correlation, malformed-JSON classification, duplicate decoded-key detection, `realm.join`, `SubscriptionSelector`, and shared entity/component state types;
+- `@hvtp/reference-host` with a WebSocket/HTTP entry point, fatal UTF-8 decoding, P1 message-size enforcement, `session.hello → session.welcome` negotiation, advertised limits/asset base, and serving of the checked-in unit-cube fixture;
+- the initial connection lifecycle through `CONNECTED → NEGOTIATED → JOINING → JOINED`;
+- one host process realm epoch shared by joined sessions;
+- validated join of the single P1 prototype realm;
+- a host-created, participant-private, static presence entity;
+- ordered initial snapshot emission with both selected durable shared entities and the owning participant's private presence;
+- a SQLite-backed durable world store for shared entities, component revisions, permanent tombstones, current-epoch sequence assignment, and restart recovery;
+- wire validation and transactional execution for `entity.create`, `component.set`, `component.patch`, and `entity.delete`;
+- same-session request-ID admission, structural-content conflict detection, and cached terminal ACK/error or `subscription.applied` results;
+- per-connection ordered streams for initial snapshots, canonical create/update/delete and interest enter/leave projection, and noninterleaved subscription replacement batches;
+- `subscription.set` with serialized unique generations, exact canonical boundary capture, replacement leaves before enters, and cached retries that never replay historical transitions;
+- explicit snapshot-to-live and buffered-to-live handoff, including deterministic snapshot/transition/publication barriers;
+- tracked shared-entity views with own private presence counted toward join, replacement, and live-growth capacity; overflow rejects replacements without changing the old view or closes only affected live subscribers after a world commit;
+- UTF-8 serialized payload accounting against `maxQueuedOutboundBytes` for snapshot/transition/catch-up batches, bounded pending state-changing admission, and cancellation of queued work on disconnect;
+- deterministic pre-commit and post-commit failure seams, with SQLite transaction rollback before commit and reconnect snapshot recovery after a response failure;
+- P1 spatial/explicit-selector filtering over recovered durable state;
+- a fresh realm epoch/sequence domain on host restart while durable state/revisions/tombstones survive;
+- per-connection sliding-window request limiting: `maxClientRequestsPerSecond` (every physical request, including malformed ones) and `maxMutationRequestsPerSecond` (new durable mutations only), driven by an injectable monotonic clock;
+- one per-connection outbound byte budget (`maxQueuedOutboundBytes`) shared by coordinator batches, direct control responses, and writes the WebSocket has not yet completed, with exactly-once release and cleanup on close or send failure;
+- real-wire coverage of single-frame and fragmented `maxMessageBytes` enforcement, `1007` on invalid UTF-8, multibyte characters split across fragments, and C33 JSON/request-shape classification;
+- safe-integer realm-sequence and component-revision overflow rejection before mutation, and live-entity-plus-tombstone budget exhaustion (`maxPersistentEntityRecords`);
+- asset-serving checks (media type, 404, 413 above `maxAssetBytes`) and a startup check that rejects plain-HTTP asset origins outside loopback/local development;
+- unit and real WebSocket multi-client integration tests for restart recovery, mutation outcomes, visibility transitions, and delayed-publication ordering.
+
+The store uses Node's built-in `node:sqlite`; Node 22.13+ exposes it without the former command-line flag, although Node 22 still labels the module experimental.
+
+The coordinator tracks the selector, generation, and shared-entity membership at the tail of each connection's admitted stream. A replacement synchronously captures SQLite state and its `baseRealmSeq`, then appends the complete applied/leave/enter batch behind earlier canonical effects. Later mutations are projected against that queued generation and append after the batch. Captured entity records are delivery payloads, not another world store. SQLite remains canonical.
+
+Join registers the subscriber at its captured `snapshotBaseSeq` before snapshot enqueue starts. Later relevant mutations append behind the snapshot, and the same stream prevents ordinary live output from overtaking catch-up. ACKs and cached terminal retry responses remain independent of subscriber delivery. One per-connection byte budget covers coordinator-held batches, direct responses, and WebSocket sends until their write callbacks complete. Coordinator reservations transfer to the transport without being counted twice, and close/failure releases outstanding accounting exactly once.
+
+This is **not yet a fully P1-conformant host** and does not claim P1 conformance. Host-side resource and transport hardening (Slice 6) is in place; the Three.js browser client, a headless reference agent, client-side snapshot validation and stale-generation rejection, renderer-local asset behavior, the full conformance sweep, and independent-consumer interoperability remain deferred. Host tests cover the lifecycle/resource cases in C07/C08/C21/C22/C24/C28/C30/C31/C32/C33/C36 plus the host-applicable parts of C34; client rejection of stale generations or invalid snapshot metadata and independent-consumer acceptance remain unverified.
+
+The reviewed HVTP 0.2/P1 specification is now merged on `main`; implementation work continues separately in the reference implementation PR.
 
 ---
 
