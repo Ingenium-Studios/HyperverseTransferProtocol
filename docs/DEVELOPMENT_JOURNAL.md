@@ -8,7 +8,7 @@ Each entry should state status clearly (for example: investigated, implemented l
 
 ## 2026-10-06 — Project history/reporting baseline introduced
 
-**Status:** process infrastructure in progress on `chore/project-history-reporting`; not released.
+**Status:** merged into the consolidated implementation branch via [#7](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/7); not released.
 
 A lightweight project-history system was introduced so future Chiefs can reconstruct internal progress separately from public release notes. The repository now distinguishes granular evidence (PRs/issues), technical release history, client-facing release notes, and non-release engineering context. Evidence: [#7](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/7).
 
