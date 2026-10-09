@@ -109,20 +109,29 @@ async function readBounded(response: Response, limit: number): Promise<Uint8Arra
  */
 export function inspectP1Fixture(bytes: Uint8Array, nodeName: string): P1FixtureInspection {
   let text: string;
-  let json: { nodes?: Array<{ name?: unknown }>; buffers?: Array<{ uri?: unknown }>; images?: Array<{ uri?: unknown }> };
+  let json: unknown;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    json = JSON.parse(text) as typeof json;
+    json = JSON.parse(text);
   } catch {
     return { ok: false, reason: "fixture is not UTF-8 glTF JSON" };
   }
-  if (typeof json !== "object" || json === null) return { ok: false, reason: "fixture is not a glTF JSON object" };
-  for (const resource of [...(json.buffers ?? []), ...(json.images ?? [])]) {
-    if (resource?.uri !== undefined && !(typeof resource.uri === "string" && resource.uri.startsWith("data:"))) {
-      return { ok: false, reason: "fixture references an external resource; only embedded data: URIs are allowed" };
+  if (typeof json !== "object" || json === null || Array.isArray(json)) return { ok: false, reason: "fixture is not a glTF JSON object" };
+  try {
+    const doc = json as { nodes?: unknown; buffers?: unknown; images?: unknown };
+    // Shapes that are not arrays are left for the glTF parser to reject; only array entries are inspected here.
+    const resources = [doc.buffers, doc.images].flatMap((list) => (Array.isArray(list) ? list : []));
+    for (const resource of resources as Array<{ uri?: unknown } | null>) {
+      const uri = typeof resource === "object" && resource !== null ? resource.uri : undefined;
+      if (uri !== undefined && !(typeof uri === "string" && uri.startsWith("data:"))) {
+        return { ok: false, reason: "fixture references an external resource; only embedded data: URIs are allowed" };
+      }
     }
+    const nodes = Array.isArray(doc.nodes) ? (doc.nodes as unknown[]) : [];
+    const nodeIndex = nodes.findIndex((node) => typeof node === "object" && node !== null && (node as { name?: unknown }).name === nodeName);
+    if (nodeIndex < 0) return { ok: false, reason: `fixture has no node named '${nodeName}'` };
+    return { ok: true, text, nodeIndex };
+  } catch (error) {
+    return { ok: false, reason: `fixture could not be inspected: ${error instanceof Error ? error.message : String(error)}` };
   }
-  const nodeIndex = Array.isArray(json.nodes) ? json.nodes.findIndex((node) => node?.name === nodeName) : -1;
-  if (nodeIndex < 0) return { ok: false, reason: `fixture has no node named '${nodeName}'` };
-  return { ok: true, text, nodeIndex };
 }

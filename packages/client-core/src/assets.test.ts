@@ -80,7 +80,20 @@ const bad: Array<[string, Uint8Array, RegExp]> = [
   ["external image", enc({ nodes: [{ name: "UnitCube" }], images: [{ uri: "http://x/a.png" }] }), /external resource/],
   ["missing node", enc({ nodes: [{ name: "Other" }] }), /no node named 'UnitCube'/],
   ["no nodes", enc({}), /no node named 'UnitCube'/],
+  ["array JSON", new TextEncoder().encode("[]"), /not a glTF JSON object/],
+  ["nodes is a number", enc({ nodes: 5 }), /no node named 'UnitCube'/],
+  ["null node entries", enc({ nodes: [null, 3, "x"] }), /no node named 'UnitCube'/],
 ];
+
+for (const [name, document] of [
+  ["buffers is a number", { buffers: 1 }], ["images is an object", { images: {} }], ["buffers is a string", { buffers: "x" }],
+  ["null buffer entries", { buffers: [null, 7], images: [null] }],
+] as Array<[string, Record<string, unknown>]>) {
+  test(`inspectP1Fixture: ${name} never throws`, () => {
+    const result = inspectP1Fixture(enc({ nodes: [{ name: "UnitCube" }], ...document }), "UnitCube");
+    assert.equal(typeof result.ok, "boolean");
+  });
+}
 for (const [name, bytes, reason] of bad) {
   test(`inspectP1Fixture: ${name} is rejected`, () => {
     const result = inspectP1Fixture(bytes, "UnitCube");
