@@ -310,7 +310,7 @@ No `THREE.*` type appears in protocol messages, canonical entity state, or `clie
 
 **Placeholder.** A redirect, non-200 response, oversized body, network failure, wrong media type, invalid glTF, missing `UnitCube` node, or external resource reference yields a magenta wireframe octahedron. It is local-only, generic, and needs no further network access. Shared state is never mutated and no request is sent. Placeholders still follow canonical transform and visibility.
 
-**Removal.** Leave, delete, snapshot replacement, and disconnect remove the entity's object and dispose its per-entity materials or placeholder resources. Leave/re-enter cycles rebuild from the new complete record and do not accumulate objects.
+**Removal.** Leave, delete, snapshot replacement, and disconnect remove the entity's object and dispose its per-entity materials or placeholder resources. Leave/re-enter cycles rebuild from the new complete record and do not accumulate objects. `P1ThreeView.dispose()` is terminal and idempotent: it first detaches from the client, so later client events cannot rebuild the view or create a loader, then releases every object and the asset cache (geometry, materials, and referenced textures, each exactly once, including a template that finishes loading after disposal).
 
 #### Running the browser demo
 

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { BufferGeometry, Color, LinearSRGBColorSpace, Mesh, MeshStandardMaterial, Object3D, Vector3 } from "three";
+import { BufferGeometry, Color, LinearSRGBColorSpace, Material, Mesh, MeshStandardMaterial, Object3D, Texture, Vector3 } from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { deepFreeze } from "@hvtp/client-core";
 import {
-  cube, created, deleted, enter, harness, leave, live, transformValue, updated, materialValue, type Harness,
+  cube, created, deleted, enter, harness, leave, live, META, transformValue, updated, materialValue, type Harness,
 } from "@hvtp/client-core/test-support";
-import { applyBaseColor, applyTransform, P1FixtureLoader, P1ThreeView, PLACEHOLDER_NAME, type P1FetchLike } from "./index.js";
+import { applyBaseColor, applyTransform, disposeObject, P1FixtureLoader, P1ThreeView, PLACEHOLDER_NAME, type P1FetchLike } from "./index.js";
 
 // GLTFLoader's FileLoader (used for the fixture's embedded data: buffer) emits the browser-only ProgressEvent.
 // Node lacks that global; browsers provide it natively. Test-environment shim only.
@@ -278,4 +279,209 @@ test("a renderable that is not the P1 fixture reference is a local load failure"
     fetch: () => { throw new Error("must not fetch"); } });
   const result = await loader.load({ asset: { uri: "other.gltf", mediaType: "model/gltf+json" }, node: "UnitCube", visible: true } as never);
   assert.equal(result.ok, false);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Disposal lifecycle and resource accounting
+// ---------------------------------------------------------------------------------------------------------------
+
+type Disposable = BufferGeometry | Material | Texture;
+
+/**
+ * Counts `dispose()` calls per GPU-backed resource and records every geometry/material/texture it is shown, so a
+ * test can compare "created" against "disposed" deterministically. Prototype spies are restored by `restore()`.
+ */
+function trackResources() {
+  const disposals = new Map<Disposable, number>();
+  const seen = new Set<Disposable>();
+  const originals = [BufferGeometry, Material, Texture].map((type) => [type.prototype, type.prototype.dispose] as const);
+  for (const [prototype, original] of originals) {
+    prototype.dispose = function (this: Disposable) { disposals.set(this, (disposals.get(this) ?? 0) + 1); original.call(this); };
+  }
+  const parse = GLTFLoader.prototype.parseAsync;
+  const gates: Array<Promise<void>> = [];
+  GLTFLoader.prototype.parseAsync = async function (this: GLTFLoader, ...args: Parameters<GLTFLoader["parseAsync"]>) {
+    await Promise.all(gates);
+    const gltf = await parse.apply(this, args);
+    for (const scene of gltf.scenes) observe(scene);
+    return gltf;
+  };
+  function observe(object: Object3D): void {
+    object.traverse((child) => {
+      const mesh = child as Partial<Mesh>;
+      if (mesh.geometry !== undefined) seen.add(mesh.geometry);
+      for (const material of Array.isArray(mesh.material) ? mesh.material : mesh.material === undefined ? [] : [mesh.material]) {
+        seen.add(material);
+        for (const value of Object.values(material) as unknown[]) if (value instanceof Texture) seen.add(value);
+      }
+    });
+  }
+  return {
+    seen, observe, count: (resource: Disposable) => disposals.get(resource) ?? 0,
+    holdParse(gate: Promise<void>) { gates.push(gate); },
+    restore() {
+      for (const [prototype, original] of originals) prototype.dispose = original as never;
+      GLTFLoader.prototype.parseAsync = parse;
+    },
+  };
+}
+
+const unitCubeRenderable = { asset: { uri: "unit-cube.gltf", mediaType: "model/gltf+json" }, node: "UnitCube", visible: true } as never;
+const loaderOptions = (fetch: P1FetchLike) => ({ assetBaseUri: "http://127.0.0.1:8787/assets/p1/", maxAssetBytes: 5_242_880, fetch });
+
+test("I3: dispose() detaches from a live client; later events cannot rebuild the view or create a loader", async () => {
+  const calls: FetchCall[] = [];
+  const { view, h } = await scene([cube("entity:a")], fixtureFetch(calls));
+  assert.equal(calls.length, 1);
+  view.dispose();
+  assert.equal(view.root.children.length, 0);
+  assert.equal(view.size, 0);
+
+  h.socket.deliver(created(cube("entity:b", 2), 11));
+  h.socket.deliver(enter(cube("entity:c", 3), 12));
+  h.socket.deliver(updated("entity:b", "hvtp.transform@1", transformValue(5, 2), 13));
+  h.socket.deliver(leave("entity:b", 14));
+  h.socket.deliver(deleted("entity:c", 15));
+  h.socket.hostClose(1006);
+  await live(h, [cube("entity:d")], { ...META, snapshotId: "snapshot:2", subscriptionId: "subscription:new" });
+  await view.whenIdle();
+  assert.equal(h.client.entities.has("entity:d"), true, "the client itself is unaffected");
+  assert.equal(view.root.children.length, 0);
+  assert.equal(view.size, 0);
+  assert.equal(calls.length, 1, "no loader was created, so nothing was fetched after dispose");
+  assert.throws(() => view.attach(h.client), /disposed/);
+  h.client.disconnect();
+});
+
+test("I3: attach/detach/dispose are idempotent, and a stale detach handle cannot detach a newer attachment", async () => {
+  const h1 = harness();
+  const h2 = harness();
+  const view = new P1ThreeView({ fetch: fixtureFetch() });
+  const detach1 = view.attach(h1.client);
+  const detach2 = view.attach(h2.client); // supersedes the first attachment
+  await live(h1, [cube("entity:from-first")]);
+  await view.whenIdle();
+  assert.equal(view.size, 0, "the superseded source no longer drives the view");
+  await live(h2, [cube("entity:from-second")]);
+  await view.whenIdle();
+  assert.deepEqual(view.root.children.map((child) => child.name), ["entity:from-second"]);
+  detach1(); // stale handle: no effect
+  assert.equal(view.size, 1);
+  detach2();
+  detach2();
+  assert.equal(view.size, 0);
+  const detach3 = view.attach(h2.client);
+  detach3();
+  view.dispose();
+  view.dispose();
+  assert.equal(view.root.children.length, 0);
+  h1.client.disconnect();
+  h2.client.disconnect();
+});
+
+test("I3: a loader disposed while the fetch is pending releases the template exactly once and hands it out never", async () => {
+  const tracker = trackResources();
+  try {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const loader = new P1FixtureLoader(loaderOptions(async () => { await gate; return new Response(FIXTURE, { status: 200, headers: { "content-type": "model/gltf+json" } }); }));
+    const pending = loader.load(unitCubeRenderable);
+    loader.dispose();
+    loader.dispose();
+    release();
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.ok(tracker.seen.size > 0, "the late template was really created");
+    for (const resource of tracker.seen) assert.equal(tracker.count(resource), 1);
+    const after = await loader.load(unitCubeRenderable);
+    assert.equal(after.ok, false, "a disposed loader loads nothing");
+  } finally {
+    tracker.restore();
+  }
+});
+
+test("I3: a loader disposed while the glTF parse is pending releases the template exactly once", async () => {
+  const tracker = trackResources();
+  try {
+    let release!: () => void;
+    tracker.holdParse(new Promise<void>((resolve) => { release = resolve; }));
+    const calls: FetchCall[] = [];
+    const loader = new P1FixtureLoader(loaderOptions(fixtureFetch(calls)));
+    const pending = loader.load(unitCubeRenderable);
+    while (calls.length === 0) await new Promise((resolve) => setImmediate(resolve));
+    loader.dispose();
+    release();
+    assert.equal((await pending).ok, false);
+    assert.ok(tracker.seen.size > 0);
+    for (const resource of tracker.seen) assert.equal(tracker.count(resource), 1);
+  } finally {
+    tracker.restore();
+  }
+});
+
+test("I3: disposing a loader after a completed load releases the template exactly once, even if disposed twice", async () => {
+  const tracker = trackResources();
+  try {
+    const loader = new P1FixtureLoader(loaderOptions(fixtureFetch()));
+    const result = await loader.load(unitCubeRenderable);
+    assert.equal(result.ok, true);
+    assert.ok(tracker.seen.size > 0);
+    for (const resource of tracker.seen) assert.equal(tracker.count(resource), 0);
+    loader.dispose();
+    loader.dispose();
+    for (const resource of tracker.seen) assert.equal(tracker.count(resource), 1);
+  } finally {
+    tracker.restore();
+  }
+});
+
+test("I3: disposeObject releases a texture shared by several materials once", () => {
+  const tracker = trackResources();
+  try {
+    const texture = new Texture();
+    const group = new Object3D();
+    for (let i = 0; i < 2; i++) group.add(new Mesh(new BufferGeometry(), new MeshStandardMaterial({ map: texture })));
+    tracker.observe(group);
+    disposeObject(group);
+    assert.equal(tracker.seen.size, 5);
+    for (const resource of tracker.seen) assert.equal(tracker.count(resource), 1);
+  } finally {
+    tracker.restore();
+  }
+});
+
+test("I3: repeated reconnect, leave/re-enter, delete, and placeholder cycles dispose every resource they create", async () => {
+  const tracker = trackResources();
+  try {
+    let failNext = false;
+    const okFetch = fixtureFetch();
+    const flaky: P1FetchLike = (url, init) => failNext ? Promise.reject(new TypeError("network down")) : okFetch(url, init);
+    const { view, h } = await scene([cube("entity:a"), cube("entity:b")], flaky);
+    const checkpoint = () => tracker.observe(view.root);
+    checkpoint();
+    for (let i = 1; i <= 8; i++) {
+      const sub = h.client.subscriptionId!;
+      h.socket.deliver(leave("entity:a", 100 + i * 10, sub));
+      h.socket.deliver(enter(cube("entity:a", i), 101 + i * 10, sub));
+      h.socket.deliver(created(cube("entity:tmp", i), 102 + i * 10, sub));
+      await view.whenIdle();
+      checkpoint();
+      h.socket.deliver(deleted("entity:tmp", 103 + i * 10, sub));
+      // Reconnect: a fresh session, loader, and template; every other cycle the asset fetch fails (placeholders).
+      h.socket.hostClose(1006);
+      assert.equal(view.root.children.length, 0);
+      failNext = i % 2 === 0;
+      await live(h, [cube("entity:a"), cube("entity:b", 2)], { ...META, snapshotId: `snapshot:${i}`, subscriptionId: `subscription:r${i}` });
+      await view.whenIdle();
+      checkpoint();
+    }
+    h.client.disconnect();
+    view.dispose();
+    assert.equal(view.root.children.length, 0);
+    assert.ok(tracker.seen.size > 20, `expected many created resources, saw ${tracker.seen.size}`);
+    const leaked = [...tracker.seen].filter((resource) => tracker.count(resource) !== 1);
+    assert.equal(leaked.length, 0, `${leaked.length} of ${tracker.seen.size} resources not disposed exactly once`);
+  } finally {
+    tracker.restore();
+  }
 });

@@ -1,4 +1,4 @@
-import type { Object3D } from "three";
+import type { Object3D, Texture } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { P1RenderableState } from "@hvtp/protocol-types";
 import { P1_FIXTURE_RENDERABLE } from "@hvtp/client-core";
@@ -19,6 +19,8 @@ export interface P1FixtureLoaderOptions {
 
 class AssetLoadFailure extends Error {}
 
+const DISPOSED_REASON = "fixture loader disposed";
+
 /**
  * Renderer-local P1 fixture loader (Prototype Profile §12.1/§15, C34).
  *
@@ -32,6 +34,8 @@ export class P1FixtureLoader {
   readonly #options: P1FixtureLoaderOptions;
   readonly #fetch: P1FetchLike;
   readonly #cache = new Map<string, Promise<P1AssetLoadResult>>();
+  /** Templates that finished loading before dispose; the only ones `dispose()` has to release itself. */
+  readonly #templates = new Set<Object3D>();
   #disposed = false;
 
   constructor(options: P1FixtureLoaderOptions) {
@@ -50,11 +54,18 @@ export class P1FixtureLoader {
       return Promise.resolve({ ok: false, url: null, reason: "renderable is not the P1 unit-cube fixture reference" });
     }
     const url = this.resolve(renderable.asset.uri);
+    if (this.#disposed) return Promise.resolve({ ok: false, url, reason: DISPOSED_REASON });
     const key = `${url}#${renderable.node}`;
     let result = this.#cache.get(key);
     if (result === undefined) {
       result = this.#loadUncached(url, renderable.node).then((loaded) => {
-        if (this.#disposed && loaded.ok) disposeObject(loaded.template);
+        if (!loaded.ok) return loaded;
+        if (this.#disposed) {
+          // Disposed while loading: this is the only place the late template is released, and it is never handed out.
+          disposeObject(loaded.template);
+          return { ok: false, url, reason: DISPOSED_REASON } satisfies P1AssetLoadResult;
+        }
+        this.#templates.add(loaded.template);
         return loaded;
       });
       this.#cache.set(key, result);
@@ -62,11 +73,15 @@ export class P1FixtureLoader {
     return result;
   }
 
-  /** Releases cached template geometry/materials. Call only once no instance from this loader is displayed. */
+  /**
+   * Releases cached template geometry/materials/textures exactly once. Templates still loading are released when
+   * their load completes. Call only once no instance from this loader is displayed. Idempotent.
+   */
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
-    for (const result of this.#cache.values()) void result.then((loaded) => { if (loaded.ok) disposeObject(loaded.template); });
+    for (const template of this.#templates) disposeObject(template);
+    this.#templates.clear();
     this.#cache.clear();
   }
 
@@ -157,11 +172,21 @@ async function parseFixture(bytes: Uint8Array, nodeName: string): Promise<Object
   }
 }
 
+/** Disposes geometry, materials, and the textures those materials reference; each shared resource once. */
 export function disposeObject(object: Object3D): void {
+  const geometries = new Set<{ dispose(): void }>();
+  const materials = new Set<{ dispose(): void }>();
   object.traverse((child) => {
     const mesh = child as Partial<{ geometry: { dispose(): void }; material: { dispose(): void } | Array<{ dispose(): void }> }>;
-    mesh.geometry?.dispose();
-    if (Array.isArray(mesh.material)) for (const material of mesh.material) material.dispose();
-    else mesh.material?.dispose();
+    if (mesh.geometry !== undefined) geometries.add(mesh.geometry);
+    if (Array.isArray(mesh.material)) for (const material of mesh.material) materials.add(material);
+    else if (mesh.material !== undefined) materials.add(mesh.material);
   });
+  const textures = new Set<Texture>();
+  for (const material of materials) {
+    for (const value of Object.values(material) as unknown[]) {
+      if ((value as Partial<Texture> | null)?.isTexture === true) textures.add(value as Texture);
+    }
+  }
+  for (const resource of [...geometries, ...materials, ...textures]) resource.dispose();
 }

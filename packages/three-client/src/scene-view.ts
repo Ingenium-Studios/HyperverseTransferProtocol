@@ -23,6 +23,11 @@ export interface P1ThreeViewOptions {
   readonly onAssetFailure?: (entityId: string, reason: string) => void;
 }
 
+interface ActiveSource {
+  readonly source: P1ViewSource;
+  readonly off: () => void;
+}
+
 interface EntityRecord {
   entity: P1SharedEntity;
   readonly root: Object3D;
@@ -50,37 +55,43 @@ export class P1ThreeView {
   readonly #records = new Map<string, EntityRecord>();
   readonly #loads = new Set<Promise<void>>();
   #loader: P1FixtureLoader | null = null;
-  #source: P1ViewSource | null = null;
+  #active: ActiveSource | null = null;
+  #disposed = false;
 
   constructor(options: P1ThreeViewOptions = {}) {
     this.#options = options;
     this.root.name = "hvtp-p1-view";
   }
 
-  /** Follows one client. Returns a detach function that also clears the scene. */
+  /**
+   * Follows one client at a time (attaching again detaches the previous one first). Returns a detach function
+   * that also clears the scene; it is idempotent and does nothing once superseded by a later `attach`.
+   */
   attach(source: P1ViewSource): () => void {
-    this.#source = source;
-    const off = source.on((event) => {
-      switch (event.type) {
-        case "view.reset":
-          this.#reset(event.entities.values());
-          return;
-        case "entity.upsert":
-          if (event.cause === "updated") this.#update(event.entity);
-          else this.#rebuild(event.entity);
-          return;
-        case "entity.remove":
-          this.#remove(event.entityId);
-          return;
-        default:
-          return;
-      }
-    });
-    return () => {
-      off();
-      this.#source = null;
-      this.#reset([]);
+    if (this.#disposed) throw new Error("P1ThreeView is disposed.");
+    this.#detach();
+    const active: ActiveSource = {
+      source,
+      off: source.on((event) => {
+        if (this.#active !== active) return; // detached meanwhile: never rebuild from a stale source
+        switch (event.type) {
+          case "view.reset":
+            this.#reset(event.entities.values());
+            return;
+          case "entity.upsert":
+            if (event.cause === "updated") this.#update(event.entity);
+            else this.#rebuild(event.entity);
+            return;
+          case "entity.remove":
+            this.#remove(event.entityId);
+            return;
+          default:
+            return;
+        }
+      }),
     };
+    this.#active = active;
+    return () => { if (this.#active === active) this.#detach(); };
   }
 
   get size(): number { return this.#records.size; }
@@ -92,7 +103,19 @@ export class P1ThreeView {
     while (this.#loads.size > 0) await Promise.all([...this.#loads]);
   }
 
+  /** Terminal and idempotent: detaches from the source, then releases every object and the asset cache. */
   dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#detach();
+  }
+
+  /** Stops listening and forgets the source before clearing, so the reset cannot create a new loader. */
+  #detach(): void {
+    const active = this.#active;
+    if (active === null) return;
+    this.#active = null;
+    active.off();
     this.#reset([]);
   }
 
@@ -101,8 +124,8 @@ export class P1ThreeView {
     // A fresh session (or none): per-session asset cache, nothing still references the old templates.
     this.#loader?.dispose();
     this.#loader = null;
-    const base = this.#source?.assetBaseUri;
-    const limits = this.#source?.limits;
+    const base = this.#active?.source.assetBaseUri;
+    const limits = this.#active?.source.limits;
     if (base != null && limits != null) {
       this.#loader = new P1FixtureLoader({
         assetBaseUri: base, maxAssetBytes: limits.maxAssetBytes,
