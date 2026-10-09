@@ -43,19 +43,20 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | ID | Milestone | Objective | Owner | Status | Branch / worktree | Depends on | Validation | PR / commit |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | M0-A | M0 | Verify repository state vs. mandate | Coordinator | validated | — | — | GitHub API: PR/branch SHAs match mandate; no issues/releases/tags | — |
-| M0-B | M0 | Inspect specs, host, client, guidance | Coordinator | active | — | — | — | — |
-| M0-C | M0 | C01–C37 conformance evidence inventory | W2 (discovery) | active | read-only `6093344` | — | — | — |
+| M0-B | M0 | Inspect specs, host, client, guidance | Coordinator | validated | — | — | — | — |
+| M0-C | M0 | C01–C37 conformance evidence inventory | W2 (discovery) | validated | read-only `6093344` | — | 35 ref-applicable: 14 covered / 19 partial / 2 gap | [evidence/conformance-inventory-baseline.md](evidence/conformance-inventory-baseline.md) |
 | M0-D | M0 | Dependencies, work packages, integration strategy | Coordinator | validated | — | M0-A | this ledger | — |
 | M1-R | M1 | Reconcile PR #6 with consolidated head | Coordinator | validated | `impl/p1-slice-7-three-client` | — | local 147/147; CI `37976850077` green | merge `d22ba57` |
-| M1-B1 | M1 | Unmatched `subscription.applied` must not activate a generation | W1 (impl) | active | `impl/p1-slice-7-three-client` | M1-R | — | — |
-| M1-I1 | M1 | Host-frame parser must not apply 128-byte client-ID rule | W1 | active | same | M1-R | — | — |
-| M1-I2 | M1 | Leave reason `authorization` (leave only) in types + runtime | W1 | active | same | M1-R | — | — |
+| M1-B1 | M1 | Unmatched `subscription.applied` must not activate a generation | W1 (impl) | in review | `impl/p1-slice-7-three-client` | M1-R | — | — |
+| M1-I1 | M1 | Host-frame parser must not apply 128-byte client-ID rule | W1 | in review | same | M1-R | — | — |
+| M1-I2 | M1 | Leave reason `authorization` (leave only) in types + runtime | W1 | in review | same | M1-R | — | — |
 | M1-I3 | M1 | `P1ThreeView` / fixture-loader dispose lifecycle | W1 | active | same | M1-R | — | — |
 | M1-DOC | M1 | History/doc impact for Slice 7 | Coordinator | planned | same | M1-B1..I3 | — | — |
 | M1-REV | M1 | Independent review of corrected Slice 7 head | Reviewer | planned | — | M1-B1..I3 | — | — |
-| M2-D | M2 | Headless agent design + §16 test design | W3 (design) | active | read-only `6093344` | — | — | — |
+| M2-D | M2 | Headless agent design + §16 test design | W3 (design) | validated | read-only `6093344` | — | Coordinator review | [evidence/headless-agent-design.md](evidence/headless-agent-design.md) |
 | M2-IMPL | M2 | Headless agent package, CLI, tests | TBD | planned | stacked on Slice 7 | M1-REV, M2-D | — | — |
-| M3 | M3 | Close reference-applicable conformance gaps | TBD | planned | stacked | M0-C | — | — |
+| M3-HOST | M3 | Close host-side conformance gaps (C02/03/10/14/15/16/17/18/20/24/25/26/27/29/32/34/35) | W4 (impl) | active | `impl/p1-conformance-host` (from `ac754f5`) | M0-C | — | — |
+| M3-CLIENT | M3 | Client-side/cross-component gaps (C08/C30 real-host cut, C28 real-host stale, Three on real host) | TBD | planned | stacked on Slice 7 | M1-REV | — | — |
 | M4 | M4 | §16 happy path, runbook, acceptance package | TBD | planned | stacked | M2, M3 | — | — |
 | M5 | M5 | Independent consumer (C23/C37) | TBD | deferred | — | M4 gate | — | — |
 
@@ -70,6 +71,9 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | D3 | 2026-10-09 | B1 policy: an unknown-ref `subscription.applied` is **inert** (no state change, no close). A ref matching a pending non-`subscription.set` request is a host protocol violation handled by existing client conventions. A matching `subscription.set` whose `previousSubscriptionId` is no longer active settles the request but never reactivates. | A duplicate terminal response for an already-settled retransmission can legitimately arrive, so treating every unknown ref as fatal would be over-strict; correlation still gates all activation (Profile §10.1, C28). | M1 | PR #6 review B1 | No |
 | D4 | 2026-10-09 | Tooling: GitHub MCP connector unavailable in this runtime; use authenticated `gh` CLI. Workers are in-session sub-agents; local worktrees live under `.worktrees/` (git-excluded). | Verified tool availability rather than assuming. | All | — | No |
 | D5 | 2026-10-09 | Merge-gated work stacks: M2+ branches are cut from the reviewed Slice 7 head and their draft PRs target the branch below them, so each PR diff contains only its own work. | Avoids idling on merge approval; keeps provenance per slice. Alternative (wait for PR #6 merge) rejected as unnecessary blocking. | M2–M4 | — | No (merges themselves remain gated) |
+| D6 | 2026-10-10 | Enforce advertised `maxAssetUriCharacters` on create: over-length asset URI → `resource_limit` (checked before exact-fixture match); other non-fixture URI → `invalid_component_state`. | C16 says URI size violations use `resource_limit`; the limit was advertised but unenforced (Profile §12: host MUST NOT silently accept values above advertised limits). | M3 | inventory gap 4 | No (implements existing normative text) |
+| D7 | 2026-10-10 | C10 Variant A evidence: host durable-mutation processing completes synchronously within one message dispatch, so no observable pending window exists; tested by two structurally-equal frames (reordered keys) written in one burst → one mutation, identical terminal results. No async commit seam added for tests. | Adding an async seam would change commit-path structure only to manufacture a window. Spec intent (one logical op, bounded waiters) is still asserted. Pending-duplicate behavior for `subscription.set` remains directly tested. | M3 | inventory C10 | No — flagged for reviewer attention |
+| D8 | 2026-10-10 | Accept W3 headless-agent design: package `@hvtp/agent-client` (deps client-core + protocol-types only), CLI `hvtp-agent`, JSONL output; rejoin with `{}` then explicit `subscription.set`; skip mutation if target already met; ≤3 conflict attempts; agent does NOT count as independent consumer for C23/C37. Engine-neutral asset policy moves into client-core after M1. Acceptance test in test-only package `@hvtp/p1-acceptance`. | See design doc. | M2/M4 | [design](evidence/headless-agent-design.md) | No |
 
 ---
 
@@ -98,13 +102,13 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 
 ## F. Continuation handoff
 
-*Last updated: 2026-10-09 (M0/M1 in progress).*
+*Last updated: 2026-10-10 (M0 complete; M1 in review; M3-HOST active).*
 
 **Verified state.** See Artifact ledger. Remote SHAs matched the mandate on 2026-10-09. PR #6 was reconciled with merge `d22ba57` and pushed (fast-forward, no force).
 
 **Environment.** Node 24 locally (CI Node 22; `engines` ≥ 22.13); npm 11; TypeScript 7.0.2; `npm install && npm test` at repo root runs all workspace suites. Python 3.12 available (candidate for M5 independent consumer). Browser validation available through an in-app browser.
 
-**Active work.** W1 Slice 7 corrections (commits locally on `impl/p1-slice-7-three-client`; Coordinator reviews and pushes). W2 conformance inventory (read-only). W3 headless-agent design (read-only).
+**Active work.** W1 Slice 7 corrections: B1 `a9baace`, I1 `4f1c859`, I2 `2838817` committed locally (Coordinator-reviewed OK), I3 in progress; nothing pushed yet. W4 host conformance gaps on `impl/p1-conformance-host`. Workers were interrupted once by a usage limit on 2026-10-09 and resumed.
 
 **Unresolved findings.** PR #6 review `5414377372`: B1, I1, I2, I3 (in progress).
 
