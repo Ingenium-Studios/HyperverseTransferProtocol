@@ -339,6 +339,17 @@ Manual acceptance procedure (supplements the automated tests):
 
 This procedure was performed against the Slice 7 build in a Chromium-based browser. Browser automation (Playwright or similar) is deliberately deferred so the repository does not take on a browser-testing framework. Deterministic client-core tests, Three scene-graph tests, and real-host integration tests carry the evidence.
 
+#### Running the headless agent
+
+```bash
+npm run build
+npm run host                                                                        # terminal 1
+npm run agent -- --entity entity:cube-01 --color 1,0,0,1                            # terminal 2: set baseColor
+npm run agent -- --entity entity:cube-01 --position=-2,0.5,0                        # move; negative values need "="
+```
+
+`@hvtp/agent-client` (`hvtp-agent`) is a deterministic step script, not an AI: it negotiates as `kind: "agent"`, subscribes to the entity explicitly, reads its structured state, and writes JSON Lines to stdout. It depends on `client-core` and `protocol-types` only (no Three.js). See [`packages/agent-client/README.md`](packages/agent-client/README.md) for the output format, exit codes, and the outcome-uncertain (C12) behavior. The agent does not count as the independent C23/C37 consumer.
+
 #### Slice 7 tests
 
 - `client-core` (fake socket): negotiation, atomic snapshot activation, rejection of mismatched `snapshotId`/`snapshotBaseSeq`/`realmEpoch`/`subscriptionId`/`entityCount`/duplicate IDs/foreign presence, partial-snapshot discard, live publications during a snapshot, the full publication lifecycle, invariant violations, sparse and equal `seq`, stale generations and cached `subscription.applied`, terminal handling independent of view membership, disconnect uncertainty without replay, and frozen canonical records.
