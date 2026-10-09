@@ -1,0 +1,28 @@
+{
+  "name": "@hvtp/agent-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "hvtp-agent": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./bin": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/*.test.js",
+    "start": "node dist/bin.js"
+  },
+  "dependencies": {
+    "@hvtp/client-core": "0.1.0",
+    "@hvtp/protocol-types": "0.1.0"
+  },
+  "devDependencies": {
+    "@hvtp/reference-host": "0.1.0"
+  }
+}
