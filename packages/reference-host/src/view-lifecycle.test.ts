@@ -113,7 +113,9 @@ test("C07/C24 replacement evicts without deletion and later global deletion reac
     b.send(remove("delete", "E"));
     const deleted = await b.take(2);
     assert.deepEqual(deleted.map((m) => m.type).sort(), ["ack", "entity.deleted"]);
-    await f.host.realmCoordinator.drain(); assert.deepEqual(await a.fence(), []);
+    // A third frame (a view.entity.leave or a duplicate entity.deleted) would arrive ahead of the fence marker.
+    await f.host.realmCoordinator.drain(); assert.deepEqual(await b.fence(), [], "B receives exactly one entity.deleted and nothing else");
+    assert.deepEqual(await a.fence(), []);
     assert.equal(f.host.worldStore.isTombstoned("E"), true);
   } finally { await f.close(); }
 });

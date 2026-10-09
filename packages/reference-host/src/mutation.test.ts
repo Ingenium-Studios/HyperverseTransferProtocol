@@ -175,6 +175,9 @@ test("failed durable create returns error and leaves no state, tombstone, sequen
   try {
     const observer = await join(host, { entities: ["entity:faulted"] }, sockets);
     const requester = await join(host, {}, sockets);
+    // Record from before the faulted attempt: a listener attached later could not see a spurious early publication.
+    const observed: Array<Record<string, unknown>> = [];
+    observer.on("message", (data) => { observed.push(JSON.parse(data.toString()) as Record<string, unknown>); });
     const failed = (await sendAndCollect(requester, create("req-fault", "entity:faulted", 0), 1))[0]!;
     assert.equal(failed.type, "error");
     assert.equal((failed.body as Record<string, unknown>).code, "resource_limit");
@@ -182,10 +185,15 @@ test("failed durable create returns error and leaves no state, tombstone, sequen
     assert.equal(host.worldStore.getEntity("entity:faulted"), null);
     assert.equal(host.worldStore.isTombstoned("entity:faulted"), false);
     assert.equal(host.worldStore.getRealmSeq(), 0);
+    await host.realmCoordinator.drain();
+    await roundTrip(observer);
+    assert.equal(observed.length, 0, "the failed attempt published nothing");
 
     fail = false;
     assert.equal((await sendAndCollect(requester, create("req-retry", "entity:faulted", 0), 1))[0]?.type, "ack");
-    assert.equal((await receiveOne(observer)).type, "entity.created");
+    await host.realmCoordinator.drain();
+    await roundTrip(observer);
+    assert.deepEqual(observed.map((message) => [message.type, message.seq]), [["entity.created", 1]], "exactly one creation, from the retry");
     assert.equal(host.worldStore.getRealmSeq(), 1);
   } finally {
     sockets.forEach((socket) => socket.close());
@@ -495,6 +503,11 @@ async function receiveMany(socket: WebSocket, count: number): Promise<Array<Reco
     socket.on("message", onMessage);
     socket.once("error", onError);
   });
+}
+
+/** Ping/pong round trip: every frame the host wrote to this socket before the pong has been received. */
+async function roundTrip(socket: WebSocket): Promise<void> {
+  await new Promise<void>((resolve) => { socket.once("pong", () => resolve()); socket.ping(); });
 }
 
 async function sendAndCollect(socket: WebSocket, text: string, count: number): Promise<Array<Record<string, unknown>>> {
