@@ -47,14 +47,14 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | M0-C | M0 | C01–C37 conformance evidence inventory | W2 (discovery) | validated | read-only `6093344` | — | 35 ref-applicable: 14 covered / 19 partial / 2 gap | [evidence/conformance-inventory-baseline.md](evidence/conformance-inventory-baseline.md) |
 | M0-D | M0 | Dependencies, work packages, integration strategy | Coordinator | validated | — | M0-A | this ledger | — |
 | M1-R | M1 | Reconcile PR #6 with consolidated head | Coordinator | validated | `impl/p1-slice-7-three-client` | — | local 147/147; CI `37976850077` green | merge `d22ba57` |
-| M1-B1 | M1 | Unmatched `subscription.applied` must not activate a generation | W1 (impl) | in review | `impl/p1-slice-7-three-client` | M1-R | — | — |
-| M1-I1 | M1 | Host-frame parser must not apply 128-byte client-ID rule | W1 | in review | same | M1-R | — | — |
-| M1-I2 | M1 | Leave reason `authorization` (leave only) in types + runtime | W1 | in review | same | M1-R | — | — |
-| M1-I3 | M1 | `P1ThreeView` / fixture-loader dispose lifecycle | W1 | active | same | M1-R | — | — |
-| M1-DOC | M1 | History/doc impact for Slice 7 | Coordinator | planned | same | M1-B1..I3 | — | — |
-| M1-REV | M1 | Independent review of corrected Slice 7 head | Reviewer | planned | — | M1-B1..I3 | — | — |
+| M1-B1 | M1 | Unmatched `subscription.applied` must not activate a generation | W1 (impl) | validated | `impl/p1-slice-7-three-client` | M1-R | R1 approve; CI `38004772113` | `a9baace` |
+| M1-I1 | M1 | Host-frame parser must not apply 128-byte client-ID rule | W1 | validated | same | M1-R | R1 approve; CI `38004772113` | `4f1c859` |
+| M1-I2 | M1 | Leave reason `authorization` (leave only) in types + runtime | W1 | validated | same | M1-R | R1 approve; CI `38004772113` | `2838817` |
+| M1-I3 | M1 | `P1ThreeView` / fixture-loader dispose lifecycle | W1 | validated | same | M1-R | R1 approve; CI `38004772113` | `be2e5ed`, nits `8cca804` |
+| M1-DOC | M1 | History/doc impact for Slice 7 | Coordinator | validated | same | M1-B1..I3 | — | `fd60fd6` |
+| M1-REV | M1 | Independent review of corrected Slice 7 head | R1 (Opus reviewer) | validated | — | M1-B1..I3 | APPROVE WITH NITS (0 blocker/important); M1+M4 fixed; M2/M5/D1/D2 deferred | PR #6 comment 6091028188 |
 | M2-D | M2 | Headless agent design + §16 test design | W3 (design) | validated | read-only `6093344` | — | Coordinator review | [evidence/headless-agent-design.md](evidence/headless-agent-design.md) |
-| M2-IMPL | M2 | Headless agent package, CLI, tests | TBD | planned | stacked on Slice 7 | M1-REV, M2-D | — | — |
+| M2-IMPL | M2 | Headless agent package, CLI, tests (+ client-core asset policy) | W5 (impl) | active | `impl/p1-slice-8-headless-agent` (from `fd60fd6`) | M1-REV, M2-D | — | — |
 | M3-HOST | M3 | Close host-side conformance gaps (C02/03/10/14/15/16/17/18/20/24/25/26/27/29/32/34/35) | W4 (impl) | active | `impl/p1-conformance-host` (from `ac754f5`) | M0-C | — | — |
 | M3-CLIENT | M3 | Client-side/cross-component gaps (C08/C30 real-host cut, C28 real-host stale, Three on real host) | TBD | planned | stacked on Slice 7 | M1-REV | — | — |
 | M4 | M4 | §16 happy path, runbook, acceptance package | TBD | planned | stacked | M2, M3 | — | — |
@@ -84,7 +84,8 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | `main` | branch | `afd3563` | spec merged (PR #1) | — |
 | Consolidated implementation | `impl/p1-reference-slice-1` / PR #2 (draft → `main`) | `ac754f5` | open, unmerged | CI `37647218352` green; local 92/92 (13 protocol-types + 79 host) on 2026-10-09 |
 | Slice 7 original head | PR #6 | `6093344` | superseded by merge | CI `37304905397` green (147) ; Chief review `5414377372` — 1 blocker, 3 important |
-| Slice 7 reconciled head | `impl/p1-slice-7-three-client` / PR #6 (draft → consolidated) | `d22ba57` | open, unmerged | local build + 147/147; CI `37976850077` green |
+| Slice 7 reconciled head | `impl/p1-slice-7-three-client` / PR #6 (draft → consolidated) | `d22ba57` | superseded | local build + 147/147; CI `37976850077` green |
+| Slice 7 corrected head | `impl/p1-slice-7-three-client` / PR #6 (draft → consolidated) | `8cca804` | open, unmerged; awaiting Chief re-review | local 176/176 (13+79+54+30); CI `38004772113` green; R1 independent review approve-with-nits |
 | Reporting system | PR #7 | merge `7114288` | merged into consolidated | — |
 | Releases / tags | — | — | none exist | GitHub API 2026-10-09 |
 
@@ -94,8 +95,9 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 
 | # | Item | Impact | Milestone | Owner | Resolution needed | External / approval? |
 | --- | --- | --- | --- | --- | --- | --- |
-| A1 | Merge PR #6 into `impl/p1-reference-slice-1` | Consolidated branch lacks browser client until merged | M1 → M4 | Human (mission owner) | Approval after M1-REV passes | **Approval required** — not yet requested |
+| A1 | Merge PR #6 into `impl/p1-reference-slice-1` | Consolidated branch lacks browser client until merged | M1 → M4 | Human (mission owner) | Chief re-review of `8cca804`, then merge approval | **Approval required** — requested 2026-10-10 |
 | A2 | Merge PR #2 into `main` | Reference implementation absent from `main` | M4 | Human | Approval after M4 gate | **Approval required** — not yet requested |
+| A3 | Normative clarification: §14.14 should state enter reasons are `subscription`/`interest` only | Spec text ambiguity (R1 M3); implementation already follows review instruction | M1/M5 | Human | Approve or reject one-line spec edit | **Approval required** (normative text) |
 | B1 | GitHub MCP connector failed to connect | None (mitigated) | — | Coordinator | `gh` CLI used instead | No |
 
 ---
