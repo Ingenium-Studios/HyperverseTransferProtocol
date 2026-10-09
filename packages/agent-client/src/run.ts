@@ -20,7 +20,7 @@ export interface P1AgentOptions {
   readonly maxAttempts?: number;
   /** Reconnect budget for the whole run and the fixed delay before each reconnect. Default 5 / 500 ms. */
   readonly reconnect?: { readonly attempts: number; readonly delayMs: number };
-  /** Bound for each wait step (entity in view, publication confirmation). Default 10_000. */
+  /** Bound for every network wait (connect, subscription, entity in view, mutation result, confirmation, asset fetch). Default 10_000. */
   readonly timeoutMs?: number;
   /** Local fixture check (C34). Default true. */
   readonly assetCheck?: boolean;
@@ -134,6 +134,22 @@ export async function runAgent(options: P1AgentOptions): Promise<P1AgentResult> 
     emit("entity.observed", { session, reason, entity: finalEntity });
   };
 
+  /**
+   * Bounds one network step. On expiry the session is closed, so a pending connect rejects with
+   * `P1ConnectionError` and a pending request or subscription rejects with `P1OutcomeUncertainError` (the C12 path).
+   */
+  async function guarded<T>(step: string, work: () => Promise<T>): Promise<T> {
+    const timer = setTimeout(() => {
+      emit("step.timeout", { session, step, timeoutMs });
+      client.disconnect();
+    }, timeoutMs);
+    try {
+      return await work();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /** Ensures a LIVE session with the explicit subscription applied. Returns true when this was not the first connection. */
   async function establish(): Promise<boolean> {
     const reconnected = everAttempted;
@@ -149,7 +165,7 @@ export async function runAgent(options: P1AgentOptions): Promise<P1AgentResult> 
       session++;
       try {
         // Always join with the empty selector; the explicit subscription.set below is then part of every session.
-        await client.connect({ subscription: {} });
+        await guarded("connect", () => client.connect({ subscription: {} }));
       } catch (error) {
         failIfViolation();
         if (error instanceof P1RequestError) throw new Fail("connection-failed", `join rejected: ${error.code}`);
@@ -168,7 +184,7 @@ export async function runAgent(options: P1AgentOptions): Promise<P1AgentResult> 
         snapshotEntityCount: client.entities.size,
       });
       try {
-        const result = await client.setSubscription({ entities: [entityId] });
+        const result = await guarded("subscription.set", () => client.setSubscription({ entities: [entityId] }));
         emit("subscription.applied", {
           session,
           previousSubscriptionId: result.body.previousSubscriptionId,
@@ -209,6 +225,10 @@ export async function runAgent(options: P1AgentOptions): Promise<P1AgentResult> 
     }
   }
 
+  function assertTapped(sent: boolean): void {
+    if (!sent) throw new Error("internal: a request reached a terminal result but the wire tap observed no outbound frame");
+  }
+
   async function applyIntent(index: number, intent: P1AgentIntent): Promise<void> {
     const component = intentComponent(intent);
     let attempts = 0;
@@ -233,7 +253,8 @@ export async function runAgent(options: P1AgentOptions): Promise<P1AgentResult> 
         ? client.setComponent(entityId, component, { baseColor: intent.baseColor }, fence)
         : client.patchComponent(entityId, component, { position: intent.position }, fence);
       let requestId: string | null = null;
-      if (outboundCount > sentBefore) {
+      const sent = outboundCount > sentBefore;
+      if (sent) {
         // The client sends synchronously, so the frame is already recorded.
         const frame = lastOutbound as { id: string; type: string; body: Record<string, unknown> };
         requestId = frame.id;
@@ -244,17 +265,28 @@ export async function runAgent(options: P1AgentOptions): Promise<P1AgentResult> 
         });
       }
       try {
-        const ack = await request;
+        const timer = setTimeout(() => {
+          emit("step.timeout", { session, step: "request", requestId, timeoutMs });
+          client.disconnect();
+        }, timeoutMs);
+        let ack: P1Ack;
+        try { ack = await request; } finally { clearTimeout(timer); }
+        assertTapped(sent);
         emit("request.committed", { requestId: ack.ref, seq: ack.seq, revision: ack.revision ?? null, authorityEpoch: ack.authorityEpoch ?? null });
         if (ack.revision !== undefined) {
+          // The ACK is authoritative. The publication only confirms it locally; stop early if the entity left the view.
           const target = ack.revision;
-          const confirmed = await until(client, () => (sharedEntity(client.entities, entityId)?.components[component].revision ?? 0) >= target, timeoutMs);
+          const revisionOf = () => sharedEntity(client.entities, entityId)?.components[component].revision;
+          const confirmed = await until(client, () => revisionOf() === undefined || revisionOf()! >= target, timeoutMs);
           const current = confirmed === "ok" ? sharedEntity(client.entities, entityId) : undefined;
-          if (current !== undefined) observedEntity("after-ack", current);
+          if (current !== undefined && current.components[component].revision >= target) observedEntity("after-ack", current);
+          else emit("entity.unconfirmed", { requestId: ack.ref, revision: ack.revision, reason: confirmed === "ok" ? "left-view" : confirmed });
         }
         emit("intent.resolved", { intent: index, resolution: "committed" satisfies Resolution, attempts });
         return;
       } catch (error) {
+        // Only a local refusal may complete without a frame on the wire; anything else means the tap missed it.
+        if (!(error instanceof P1ClientStateError)) assertTapped(sent);
         if (error instanceof P1RequestError) {
           emit("request.rejected", {
             requestId: error.ref, code: error.code,
@@ -279,7 +311,9 @@ export async function runAgent(options: P1AgentOptions): Promise<P1AgentResult> 
           continue;
         }
         if (error instanceof P1ClientStateError) {
-          // Nothing was sent (the session ended between observation and submission).
+          // Nothing was sent. If the session is still LIVE the refusal is local and permanent (pending-request or
+          // message-size limit), so retrying cannot help.
+          if (client.phase === "live") throw new Fail("rejected", `request refused locally: ${error.message}`);
           reason = "after-reconnect";
           continue;
         }
@@ -295,7 +329,7 @@ export async function runAgent(options: P1AgentOptions): Promise<P1AgentResult> 
     const first = await observe("subscribed");
     if (options.assetCheck !== false && !assetChecked) {
       assetChecked = true;
-      const result = await checkAsset(first.components["hvtp.renderable@1"].state, client.assetBaseUri!, client.limits!.maxAssetBytes, options.fetch);
+      const result = await checkAsset(first.components["hvtp.renderable@1"].state, client.assetBaseUri!, client.limits!.maxAssetBytes, options.fetch, timeoutMs);
       emit("asset.checked", result.ok ? { url: result.url, ok: true, bytes: result.bytes } : { url: result.url, ok: false, reason: result.reason });
     }
     for (const [index, intent] of intents.entries()) await applyIntent(index, intent);

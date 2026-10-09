@@ -46,6 +46,14 @@ export class ScriptedHost {
   refuseConnections = 0;
   /** If set, the host answers the next hello with this raw (invalid) frame instead of a welcome. */
   garbageOnHello: string | null = null;
+  /** Number of upcoming sessions whose hello is never answered. */
+  silentHellos = 0;
+  /** Number of upcoming subscription.set requests that are never answered. */
+  silentSubscriptions = 0;
+  /** If set, replaces the advertised limits of the next welcomes. */
+  limits: Record<string, number> | null = null;
+  /** Skip publishing a commit back to its requester (the ACK still arrives). */
+  omitOwnPublication = false;
   seq = 10;
   private mutations = 0;
 
@@ -90,7 +98,11 @@ export class ScriptedHost {
     switch (frame.type) {
       case "session.hello":
         if (this.garbageOnHello !== null) { socket.deliver(this.garbageOnHello); return; }
-        socket.deliver(welcome());
+        if (this.silentHellos > 0) { this.silentHellos--; return; }
+        {
+          const message = welcome();
+          socket.deliver(this.limits === null ? message : { ...message, body: { ...message.body, limits: { ...message.body.limits, ...this.limits } } });
+        }
         return;
       case "realm.join": {
         socket.selector = frame.body.subscription;
@@ -107,6 +119,7 @@ export class ScriptedHost {
         return;
       }
       case "subscription.set": {
+        if (this.silentSubscriptions > 0) { this.silentSubscriptions--; return; }
         const previous = socket.subscriptionId;
         socket.selector = frame.body;
         socket.subscriptionId = `subscription:${socket.index}:${++socket.generation}`;
@@ -152,7 +165,7 @@ export class ScriptedHost {
           return;
         }
         const state = frame.type === "component.set" ? frame.body.state : { ...current.state, ...frame.body.patch };
-        const seq = this.commit(entityId, component, state, socket, behavior.kind !== "commit-and-drop");
+        const seq = this.commit(entityId, component, state, socket, behavior.kind !== "commit-and-drop" && !this.omitOwnPublication);
         if (behavior.kind === "commit-and-drop") { socket.hostClose(behavior.code ?? 1011); return; }
         socket.deliver(ack(frame.id, seq, entityId, { component, revision: current.revision + 1, authorityEpoch: 1 }));
       }

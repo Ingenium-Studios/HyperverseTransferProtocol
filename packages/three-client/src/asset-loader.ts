@@ -81,6 +81,15 @@ export class P1FixtureLoader {
   }
 
   async #loadUncached(renderable: P1RenderableState): Promise<P1AssetLoadResult> {
+    // Defensive: whatever goes wrong becomes a local failure, never a rejected (cached) promise.
+    try {
+      return await this.#loadChecked(renderable);
+    } catch (error) {
+      return { ok: false, url: null, reason: `fixture load failed: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  async #loadChecked(renderable: P1RenderableState): Promise<P1AssetLoadResult> {
     const fetched = await fetchP1Fixture(renderable, {
       assetBaseUri: this.#options.assetBaseUri, maxAssetBytes: this.#options.maxAssetBytes,
       ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),

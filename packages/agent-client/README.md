@@ -11,11 +11,17 @@ It depends only on `@hvtp/client-core` and `@hvtp/protocol-types` (plus the Node
 ```bash
 npm run build
 npm run host                                                           # reference host on ws://127.0.0.1:8787/hvtp
-npm run agent -- --entity entity:cube-01                               # observe only
-npm run agent -- --entity entity:cube-01 --color 1,0,0,1               # component.set hvtp.material@1
-npm run agent -- --entity entity:cube-01 --position=-2,0.5,0 --trace-wire
+node packages/agent-client/dist/bin.js --entity <id>                   # observe only
+node packages/agent-client/dist/bin.js --entity <id> --color 1,0,0,1   # component.set hvtp.material@1
+npm run --silent agent -- --entity <id> --position=-2,0.5,0 --trace-wire
 node packages/agent-client/dist/bin.js --help
 ```
+
+`<id>` must be the ID of an entity that already exists. The host starts empty and the agent never creates
+entities. Create one first, for example with **Create cube** in the browser demo (`npm run client:dev`; the entity
+list shows the generated ID), or from any client with `createEntity({ id: "entity:cube-01", ... })`. A missing
+entity exits 3. `npm run agent` prints npm banner lines on stdout; use `npm run --silent agent -- ...` or call
+`node packages/agent-client/dist/bin.js` directly when the output is piped, so stdout is pure JSON Lines.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -25,7 +31,7 @@ node packages/agent-client/dist/bin.js --help
 | `--position=x,y,z` | none | Target transform `position` (within +/-1e6); sent as `component.patch`. Negative values need `=`. |
 | `--max-attempts <n>` | 3 | Submissions per intent across conflicts and uncertain outcomes. |
 | `--reconnect-attempts <n>` / `--reconnect-delay-ms <n>` | 5 / 500 | Reconnect budget for the whole run and the fixed delay before each reconnect. |
-| `--timeout-ms <n>` | 10000 | Bound for each wait step, including detecting that the entity is absent. |
+| `--timeout-ms <n>` | 10000 | Bound for every network wait: connect and handshake, `subscription.set`, the entity entering the view, each mutation's terminal result, the post-ACK confirmation, and the fixture fetch (also an `AbortSignal`). |
 | `--no-asset-check` | check on | Skip the local fixture fetch and inspection. |
 | `--trace-wire` | off | Also emit every frame as `wire.out` / `wire.in`. |
 | `--client-name <s>` | `hvtp-agent-client` | `session.hello` client name. |
@@ -51,6 +57,20 @@ Programmatic use: `runAgent(options)` returns `{ outcome, exitCode, events, fina
    Otherwise send the mutation fenced with the observed `baseRevision` and `authorityEpoch`.
 7. Resolve the outcome from the ACK or terminal error, disconnect, and print the result.
 
+## Timeouts
+
+Every step that waits on the network is bounded by `--timeout-ms`. When a connect, handshake, `subscription.set` or
+mutation does not finish in time, the agent emits `step.timeout` and closes the session. A pending connect then
+fails and counts against the reconnect budget; a pending request or subscription becomes outcome-uncertain and
+follows the C12 path below (never re-sent). A stalled fixture fetch is aborted and reported as a local
+`asset.checked ok:false` failure; the run continues. After an ACK the agent waits at most `--timeout-ms` for the
+confirming publication. If it does not arrive, or the entity leaves the view, it emits `entity.unconfirmed`; the
+outcome stays committed because the ACK is authoritative.
+
+A `P1ClientStateError` while the session is still live (the client refused the request locally, for example
+because of the advertised pending-request or message-size limits) is terminal: exit 4 with
+`request refused locally` in the result `message`.
+
 ## Output: JSON Lines on stdout
 
 One JSON object per line, `{"n":<ordinal>,"event":"<name>",...}`, with no timestamps. Human text (usage, internal
@@ -58,7 +78,7 @@ errors) goes to stderr only. Events: `agent.start`, `session.live`, `subscriptio
 (`reason`: `subscribed`, `after-ack`, `after-conflict`, `after-reconnect`), `asset.checked`, `request.sent`,
 `request.committed`, `request.rejected`, `request.uncertain`, `session.closed`, `host.error`, `protocol.violation`,
 `intent.resolved` (`committed`, `already-satisfied`, `satisfied-after-uncertain`, `satisfied-after-conflict`),
-`wire.out`/`wire.in` (only with `--trace-wire`), and a final `result { outcome, exitCode, message? }`.
+`step.timeout`, `entity.unconfirmed`, `wire.out`/`wire.in` (only with `--trace-wire`), and a final `result { outcome, exitCode, message? }`.
 `entity.observed` carries the canonical component envelopes verbatim plus a `derived` block with only what the
 agent computed (`assetUrl`, `visible`); nothing is inferred from the entity ID. `baseColor` is reported as linear
 factors without conversion.
@@ -90,6 +110,11 @@ explicitly again, and compares the canonical state with the frozen target:
 `revision_mismatch` is handled the same way after waiting for the newer revision: observe, re-evaluate, and retry
 with a new request ID, at most `--max-attempts` submissions per intent. A host restart changes `realmEpoch` (C20);
 the agent simply starts a new session and never carries state across.
+
+## Limitations
+
+A transient `entity-not-visible` cannot be told apart from an absent entity (P1 has no transition-complete
+marker), and one reconnect budget is shared by the whole run.
 
 ## Scope
 

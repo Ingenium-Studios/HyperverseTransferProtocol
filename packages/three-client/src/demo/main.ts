@@ -65,6 +65,8 @@ function newClient(url: string): P1Client {
     if (event.type === "publication.stale") log(`ignored stale ${event.messageType} (${event.subscriptionId})`);
     if (event.type === "closed") log(`closed ${event.code}${event.uncertainRequestIds.length ? `; uncertain: ${event.uncertainRequestIds.join(", ")}` : ""}`);
     render();
+    // Asset loads finish after the event that started them; refresh the `[loading]` labels once they settle.
+    void view.whenIdle().then(render);
   });
   return next;
 }

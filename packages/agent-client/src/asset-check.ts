@@ -10,9 +10,11 @@ export type AssetCheckResult =
  * fetch, size bounds and JSON inspection as the browser client. It never touches shared state and never throws.
  */
 export async function checkAsset(renderable: P1RenderableState, assetBaseUri: string, maxAssetBytes: number,
-  fetch?: P1FetchLike): Promise<AssetCheckResult> {
+  fetch?: P1FetchLike, timeoutMs?: number): Promise<AssetCheckResult> {
   try {
-    const fetched = await fetchP1Fixture(renderable, { assetBaseUri, maxAssetBytes, ...(fetch === undefined ? {} : { fetch }) });
+    const fetched = await fetchP1Fixture(renderable, {
+      assetBaseUri, maxAssetBytes, ...(fetch === undefined ? {} : { fetch }), ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    });
     if (!fetched.ok) return fetched;
     const inspected = inspectP1Fixture(fetched.bytes, renderable.node);
     if (!inspected.ok) return { ok: false, url: fetched.url, reason: inspected.reason };

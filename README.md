@@ -344,8 +344,9 @@ This procedure was performed against the Slice 7 build in a Chromium-based brows
 ```bash
 npm run build
 npm run host                                                                        # terminal 1
-npm run agent -- --entity entity:cube-01 --color 1,0,0,1                            # terminal 2: set baseColor
-npm run agent -- --entity entity:cube-01 --position=-2,0.5,0                        # move; negative values need "="
+# Create a cube first (browser demo "Create cube", or any client); the host starts empty. Use its ID as <id>.
+node packages/agent-client/dist/bin.js --entity <id> --color 1,0,0,1                # terminal 2: set baseColor
+npm run --silent agent -- --entity <id> --position=-2,0.5,0                         # move; negative values need "="
 ```
 
 `@hvtp/agent-client` (`hvtp-agent`) is a deterministic step script, not an AI: it negotiates as `kind: "agent"`, subscribes to the entity explicitly, reads its structured state, and writes JSON Lines to stdout. It depends on `client-core` and `protocol-types` only (no Three.js). See [`packages/agent-client/README.md`](packages/agent-client/README.md) for the output format, exit codes, and the outcome-uncertain (C12) behavior. The agent does not count as the independent C23/C37 consumer.

@@ -80,7 +80,20 @@ const bad: Array<[string, Uint8Array, RegExp]> = [
   ["external image", enc({ nodes: [{ name: "UnitCube" }], images: [{ uri: "http://x/a.png" }] }), /external resource/],
   ["missing node", enc({ nodes: [{ name: "Other" }] }), /no node named 'UnitCube'/],
   ["no nodes", enc({}), /no node named 'UnitCube'/],
+  ["array JSON", new TextEncoder().encode("[]"), /not a glTF JSON object/],
+  ["nodes is a number", enc({ nodes: 5 }), /no node named 'UnitCube'/],
+  ["null node entries", enc({ nodes: [null, 3, "x"] }), /no node named 'UnitCube'/],
 ];
+
+for (const [name, document] of [
+  ["buffers is a number", { buffers: 1 }], ["images is an object", { images: {} }], ["buffers is a string", { buffers: "x" }],
+  ["null buffer entries", { buffers: [null, 7], images: [null] }],
+] as Array<[string, Record<string, unknown>]>) {
+  test(`inspectP1Fixture: ${name} never throws`, () => {
+    const result = inspectP1Fixture(enc({ nodes: [{ name: "UnitCube" }], ...document }), "UnitCube");
+    assert.equal(typeof result.ok, "boolean");
+  });
+}
 for (const [name, bytes, reason] of bad) {
   test(`inspectP1Fixture: ${name} is rejected`, () => {
     const result = inspectP1Fixture(bytes, "UnitCube");
@@ -88,3 +101,21 @@ for (const [name, bytes, reason] of bad) {
     if (!result.ok) assert.match(result.reason, reason);
   });
 }
+
+test("fetchP1Fixture: timeoutMs passes an AbortSignal and a stalled body becomes a local failure", async () => {
+  let signal: AbortSignal | undefined;
+  const stalled: P1FetchLike = async (_url, init) => {
+    signal = init.signal ?? undefined;
+    return new Response(new ReadableStream<Uint8Array>({ pull: () => new Promise(() => {}) }), { status: 200, headers: GLTF });
+  };
+  const result = await fetchP1Fixture(RENDERABLE, { ...options(stalled), timeoutMs: 20 });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /timed out after 20 ms/);
+  assert.equal(signal?.aborted, true);
+});
+
+test("fetchP1Fixture: without timeoutMs no signal is passed", async () => {
+  const calls: Call[] = [];
+  await fetchP1Fixture(RENDERABLE, options(respond(calls, DOC)));
+  assert.equal(calls[0]!.init.signal, undefined);
+});
