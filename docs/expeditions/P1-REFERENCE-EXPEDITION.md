@@ -55,7 +55,7 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | M1-REV | M1 | Independent review of corrected Slice 7 head | R1 (Opus reviewer) | validated | — | M1-B1..I3 | APPROVE WITH NITS (0 blocker/important); M1+M4 fixed; M2/M5/D1/D2 deferred | PR #6 comment 6091028188 |
 | M2-D | M2 | Headless agent design + §16 test design | W3 (design) | validated | read-only `6093344` | — | Coordinator review | [evidence/headless-agent-design.md](evidence/headless-agent-design.md) |
 | M2-IMPL | M2 | Headless agent package, CLI, tests (+ client-core asset policy) | W5 (impl) | active | `impl/p1-slice-8-headless-agent` (from `fd60fd6`) | M1-REV, M2-D | — | — |
-| M3-HOST | M3 | Close host-side conformance gaps (C02/03/10/14/15/16/17/18/20/24/25/26/27/29/32/34/35) | W4 (impl) | active | `impl/p1-conformance-host` (from `ac754f5`) | M0-C | — | — |
+| M3-HOST | M3 | Close host-side conformance gaps (C02/03/10/14/15/16/17/18/20/24/25/26/27/29/32/34/35) | W4 (impl) | in review | `impl/p1-conformance-host` (from `ac754f5`) | M0-C | Coordinator review; local 114/114 | PR #8 @ `9904792` |
 | M3-CLIENT | M3 | Client-side/cross-component gaps (C08/C30 real-host cut, C28 real-host stale, Three on real host) | TBD | planned | stacked on Slice 7 | M1-REV | — | — |
 | M4 | M4 | §16 happy path, runbook, acceptance package | TBD | planned | stacked | M2, M3 | — | — |
 | M5 | M5 | Independent consumer (C23/C37) | TBD | deferred | — | M4 gate | — | — |
@@ -87,6 +87,7 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | Slice 7 reconciled head | `impl/p1-slice-7-three-client` / PR #6 (draft → consolidated) | `d22ba57` | superseded | local build + 147/147; CI `37976850077` green |
 | Slice 7 corrected head | `impl/p1-slice-7-three-client` / PR #6 (draft → consolidated) | `8cca804` | open, unmerged; awaiting Chief re-review | local 176/176 (13+79+54+30); CI `38004772113` green; R1 independent review approve-with-nits |
 | Reporting system | PR #7 | merge `7114288` | merged into consolidated | — |
+| Host conformance | `impl/p1-conformance-host` / PR #8 (draft → consolidated) | `9904792` | open, unmerged | local 114/114 (13+101); one host fix (D6) |
 | Releases / tags | — | — | none exist | GitHub API 2026-10-09 |
 
 ---
@@ -97,6 +98,7 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | --- | --- | --- | --- | --- | --- | --- |
 | A1 | Merge PR #6 into `impl/p1-reference-slice-1` | Consolidated branch lacks browser client until merged | M1 → M4 | Human (mission owner) | Chief re-review of `8cca804`, then merge approval | **Approval required** — requested 2026-10-10 |
 | A2 | Merge PR #2 into `main` | Reference implementation absent from `main` | M4 | Human | Approval after M4 gate | **Approval required** — not yet requested |
+| A4 | Spec rulings from M3-HOST: (a) client→host host-publication type: `unsupported_message` vs `invalid_message` (C25); (b) error code for empty/non-object patch (§14.10) | Tests tolerate/pin current behavior | M3 | Human | Ruling or accept current | Approval only if spec text changes |
 | A3 | Normative clarification: §14.14 should state enter reasons are `subscription`/`interest` only | Spec text ambiguity (R1 M3); implementation already follows review instruction | M1/M5 | Human | Approve or reject one-line spec edit | **Approval required** (normative text) |
 | B1 | GitHub MCP connector failed to connect | None (mitigated) | — | Coordinator | `gh` CLI used instead | No |
 
