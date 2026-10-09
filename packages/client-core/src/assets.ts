@@ -18,6 +18,11 @@ export interface P1AssetFetchOptions {
   /** `session.welcome.limits.maxAssetBytes` of the current session. */
   readonly maxAssetBytes: number;
   readonly fetch?: P1FetchLike;
+  /**
+   * Optional bound for the whole fetch (headers and body). On expiry the request is aborted through an
+   * `AbortSignal` passed in the fetch init and the result is a local failure. Browsers may omit it.
+   */
+  readonly timeoutMs?: number;
 }
 
 export type P1FixtureInspection =
@@ -46,19 +51,32 @@ export async function fetchP1Fixture(renderable: P1RenderableState, options: P1A
     return { ok: false, url: null, reason: "renderable is not the P1 unit-cube fixture reference" };
   }
   const url = resolveP1AssetUrl(options.assetBaseUri, renderable.asset.uri);
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return { ok: true, url, bytes: await fetchBounded(url, options) };
+    const work = fetchBounded(url, options, options.timeoutMs === undefined ? undefined : controller.signal);
+    if (options.timeoutMs === undefined) return { ok: true, url, bytes: await work };
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new AssetFailure(`fetch timed out after ${options.timeoutMs} ms`));
+      }, options.timeoutMs);
+    });
+    work.catch(() => {}); // a late failure after the timeout must not become an unhandled rejection
+    return { ok: true, url, bytes: await Promise.race([work, expired]) };
   } catch (error) {
     return { ok: false, url, reason: error instanceof Error ? error.message : String(error) };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-async function fetchBounded(url: string, options: P1AssetFetchOptions): Promise<Uint8Array> {
+async function fetchBounded(url: string, options: P1AssetFetchOptions, signal?: AbortSignal): Promise<Uint8Array> {
   const limit = options.maxAssetBytes;
   const fetchFn: P1FetchLike = options.fetch ?? ((target, init) => globalThis.fetch(target, init));
   let response: Response;
   try {
-    response = await fetchFn(url, { redirect: "manual", credentials: "omit", mode: "cors" });
+    response = await fetchFn(url, { redirect: "manual", credentials: "omit", mode: "cors", ...(signal === undefined ? {} : { signal }) });
   } catch (error) {
     throw new AssetFailure(`fetch failed: ${error instanceof Error ? error.message : String(error)}`);
   }

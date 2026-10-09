@@ -30,7 +30,7 @@ export const USAGE = `Usage: hvtp-agent --entity <id> [options]
   --max-attempts <n>           Submissions per intent across conflicts and uncertainty (default 3)
   --reconnect-attempts <n>     Reconnect budget for the whole run (default 5)
   --reconnect-delay-ms <n>     Fixed delay before each reconnect (default 500)
-  --timeout-ms <n>             Bound for each wait step (default 10000)
+  --timeout-ms <n>             Bound for every network wait step (default 10000)
   --no-asset-check             Skip the local fixture fetch and inspection
   --trace-wire                 Also emit every frame as wire.out / wire.in
   --client-name <s>            session.hello client name (default hvtp-agent-client)
@@ -53,7 +53,7 @@ function numberList(name: string, text: string, length: number): number[] {
 }
 
 function integer(name: string, text: string, min: number, max: number): number {
-  const value = text.trim() === "" ? Number.NaN : Number(text);
+  const value = /^\d+$/.test(text) ? Number(text) : Number.NaN;
   if (!Number.isInteger(value) || value < min || value > max) throw new UsageError(`--${name} must be an integer in [${min}, ${max}].`);
   return value;
 }

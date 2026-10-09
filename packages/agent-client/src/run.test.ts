@@ -265,3 +265,87 @@ test("a throwing event sink never affects the run", async () => {
   const result = await run(host, { intents: [], onEvent: () => { throw new Error("sink failure"); } });
   assert.equal(result.exitCode, 0);
 });
+
+// --- bounded waits (every network step races timeoutMs) ---
+
+test("T1 (C12): a never-answered mutation times out, becomes uncertain, reconnects, and is resolved from canonical state without a resend", async () => {
+  const host = hostWithCube();
+  host.mutate = (_frame, index) => (index === 0 ? { kind: "ignore" } : { kind: "commit" });
+  const result = await run(host, { timeoutMs: 50 });
+  assert.equal(result.exitCode, 0);
+  const timeout = find(result, "step.timeout")[0]!;
+  assert.deepEqual([timeout.step, timeout.requestId], ["request", componentFrames(host)[0]!.id]);
+  assert.equal(find(result, "request.uncertain")[0]!.requestId, componentFrames(host)[0]!.id);
+  const frames = componentFrames(host);
+  assert.equal(frames.length, 2);
+  assert.notEqual(frames[0]!.id, frames[1]!.id);
+  assert.deepEqual(host.typesOf(2), [...HANDSHAKE, "component.set"]);
+  assert.equal(host.received.filter((entry) => entry.frame.id === frames[0]!.id).length, 1);
+});
+
+test("T1: a never-answered mutation that did not commit exhausts the attempts without resending an ID", async () => {
+  const host = hostWithCube();
+  host.mutate = () => ({ kind: "ignore" });
+  const result = await run(host, { timeoutMs: 30 });
+  assert.deepEqual([result.outcome, result.exitCode], ["exhausted", 5]);
+  assert.equal(new Set(componentFrames(host).map((frame) => frame.id)).size, 3);
+});
+
+test("T2: a host that never sends session.welcome is bounded and exits 6 after the reconnect budget", async () => {
+  const host = hostWithCube();
+  host.silentHellos = 100;
+  const result = await run(host, { timeoutMs: 30, reconnect: { attempts: 2, delayMs: 0 } });
+  assert.deepEqual([result.outcome, result.exitCode], ["connection-failed", 6]);
+  assert.equal(host.sockets.length, 3);
+  assert.deepEqual(find(result, "step.timeout").map((event) => event.step), ["connect", "connect", "connect"]);
+});
+
+test("T2: a handshake stall counts against the budget and a later attempt can succeed", async () => {
+  const host = hostWithCube();
+  host.silentHellos = 1;
+  const result = await run(host, { timeoutMs: 30, intents: [] });
+  assert.equal(result.exitCode, 0);
+  assert.equal(host.sockets.length, 2);
+});
+
+test("T3: a never-answered subscription.set times out, reconnects, and succeeds on the next session", async () => {
+  const host = hostWithCube();
+  host.silentSubscriptions = 1;
+  const result = await run(host, { timeoutMs: 50, intents: [] });
+  assert.equal(result.exitCode, 0);
+  assert.equal(find(result, "step.timeout")[0]!.step, "subscription.set");
+  assert.equal(host.framesOf("subscription.set").length, 2);
+  assert.deepEqual(new Set(host.framesOf("subscription.set").map((frame) => frame.id)).size, 2);
+});
+
+test("T4: a stalled asset body is a local failure and the run continues", async () => {
+  const host = hostWithCube();
+  const stalled = async () => new Response(new ReadableStream<Uint8Array>({ pull: () => new Promise(() => {}) }), { status: 200, headers: GLTF });
+  const result = await run(host, { assetCheck: true, fetch: stalled, timeoutMs: 50 });
+  assert.equal(result.exitCode, 0);
+  const checked = find(result, "asset.checked")[0]!;
+  assert.equal(checked.ok, false);
+  assert.match(String(checked.reason), /timed out/);
+  assert.equal(componentFrames(host).length, 1);
+});
+
+test("m1: a local refusal while the session is still LIVE is terminal, not retried", async () => {
+  const host = hostWithCube();
+  host.limits = { maxMessageBytes: 200 };
+  const result = await run(host);
+  assert.deepEqual([result.outcome, result.exitCode], ["rejected", 4]);
+  assert.match(String(find(result, "result")[0]!.message), /refused locally/);
+  assert.equal(host.sockets.length, 1);
+  assert.equal(componentFrames(host).length, 0);
+});
+
+test("m2: an ACK whose confirming publication never arrives is reported as entity.unconfirmed and stays committed", async () => {
+  const host = hostWithCube();
+  host.omitOwnPublication = true;
+  const result = await run(host, { timeoutMs: 50 });
+  assert.equal(result.exitCode, 0);
+  const unconfirmed = find(result, "entity.unconfirmed")[0]!;
+  assert.deepEqual([unconfirmed.revision, unconfirmed.reason], [2, "timeout"]);
+  assert.equal(find(result, "intent.resolved")[0]!.resolution, "committed");
+  assert.equal(componentFrames(host).length, 1);
+});

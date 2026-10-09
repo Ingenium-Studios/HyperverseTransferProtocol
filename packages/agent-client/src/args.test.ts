@@ -34,7 +34,7 @@ test("U13: out-of-range or malformed values are usage errors", () => {
   for (const bad of [
     ["--color", "1,0,0"], ["--color", "1,0,0,2"], ["--color", "1,0,0,NaN"], ["--color", "1,,0,1"],
     ["--position=1,2"], ["--position=1,2,1e7"], ["--position=1,2,x"],
-    ["--max-attempts", "0"], ["--max-attempts", "1.5"], ["--timeout-ms", "0"], ["--reconnect-attempts", "-1"],
+    ["--max-attempts", "0"], ["--max-attempts", "1.5"], ["--max-attempts", "1e1"], ["--max-attempts", "+3"], ["--max-attempts", " 3"], ["--reconnect-attempts", "-0"], ["--timeout-ms", "0"], ["--reconnect-attempts", "-1"],
     ["--url", "http://127.0.0.1:8787/hvtp"], ["--url", "not a url"], ["--bogus"], ["stray"],
   ]) error(...base, ...bad);
   error("--entity", "x".repeat(129));

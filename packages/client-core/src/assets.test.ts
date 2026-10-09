@@ -101,3 +101,21 @@ for (const [name, bytes, reason] of bad) {
     if (!result.ok) assert.match(result.reason, reason);
   });
 }
+
+test("fetchP1Fixture: timeoutMs passes an AbortSignal and a stalled body becomes a local failure", async () => {
+  let signal: AbortSignal | undefined;
+  const stalled: P1FetchLike = async (_url, init) => {
+    signal = init.signal ?? undefined;
+    return new Response(new ReadableStream<Uint8Array>({ pull: () => new Promise(() => {}) }), { status: 200, headers: GLTF });
+  };
+  const result = await fetchP1Fixture(RENDERABLE, { ...options(stalled), timeoutMs: 20 });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /timed out after 20 ms/);
+  assert.equal(signal?.aborted, true);
+});
+
+test("fetchP1Fixture: without timeoutMs no signal is passed", async () => {
+  const calls: Call[] = [];
+  await fetchP1Fixture(RENDERABLE, options(respond(calls, DOC)));
+  assert.equal(calls[0]!.init.signal, undefined);
+});
