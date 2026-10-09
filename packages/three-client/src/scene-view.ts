@@ -25,7 +25,7 @@ export interface P1ThreeViewOptions {
 
 interface ActiveSource {
   readonly source: P1ViewSource;
-  readonly off: () => void;
+  off: () => void;
 }
 
 interface EntityRecord {
@@ -70,27 +70,26 @@ export class P1ThreeView {
   attach(source: P1ViewSource): () => void {
     if (this.#disposed) throw new Error("P1ThreeView is disposed.");
     this.#detach();
-    const active: ActiveSource = {
-      source,
-      off: source.on((event) => {
-        if (this.#active !== active) return; // detached meanwhile: never rebuild from a stale source
-        switch (event.type) {
-          case "view.reset":
-            this.#reset(event.entities.values());
-            return;
-          case "entity.upsert":
-            if (event.cause === "updated") this.#update(event.entity);
-            else this.#rebuild(event.entity);
-            return;
-          case "entity.remove":
-            this.#remove(event.entityId);
-            return;
-          default:
-            return;
-        }
-      }),
-    };
+    // `active` is published before subscribing so a source that emits synchronously inside `on()` is handled.
+    const active: ActiveSource = { source, off: () => {} };
     this.#active = active;
+    active.off = source.on((event) => {
+      if (this.#active !== active) return; // detached meanwhile: never rebuild from a stale source
+      switch (event.type) {
+        case "view.reset":
+          this.#reset(event.entities.values());
+          return;
+        case "entity.upsert":
+          if (event.cause === "updated") this.#update(event.entity);
+          else this.#rebuild(event.entity);
+          return;
+        case "entity.remove":
+          this.#remove(event.entityId);
+          return;
+        default:
+          return;
+      }
+    });
     return () => { if (this.#active === active) this.#detach(); };
   }
 
