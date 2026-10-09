@@ -369,6 +369,153 @@ test("C28: a cached older subscription.applied resolves its request but never re
   assert.deepEqual(ids(h), ["entity:e", PRESENCE]);
 });
 
+const activations = (h: Harness) => h.events.filter((e) => e.type === "subscription.activated");
+const staleCount = (h: Harness) => h.events.filter((e) => e.type === "publication.stale").length;
+
+test("B1: an unsolicited subscription.applied with an unknown ref is inert and never activates a generation", async () => {
+  const h = harness();
+  await live(h, [cube("entity:a")]);
+  const activeSelector = h.client.effectiveSubscription;
+  const viewBefore = h.client.entities;
+
+  // Syntactically valid, formally a transition from the active generation, but it answers no request.
+  h.socket.deliver(applied("req:never-sent", S0, "subscription:rogue", 20, { entities: ["entity:zzz"] }));
+  assert.equal(h.client.phase, "live");
+  assert.equal(h.socket.closed, null, "unmatched terminal noise must not close the connection");
+  assert.equal(h.client.subscriptionId, S0);
+  assert.equal(h.client.effectiveSubscription, activeSelector);
+  assert.equal(h.client.entities, viewBefore);
+  assert.deepEqual(ids(h), ["entity:a", PRESENCE]);
+  assert.equal(activations(h).length, 0);
+  assert.equal(h.events.some((e) => e.type === "protocol.violation"), false);
+
+  // The real generation keeps applying; the rogue generation's traffic is stale.
+  h.socket.deliver(created(cube("entity:b", 2), 21));
+  assert.deepEqual(ids(h), ["entity:a", "entity:b", PRESENCE]);
+  assert.equal(staleCount(h), 0);
+  h.socket.deliver(created(cube("entity:c", 3), 22, "subscription:rogue"));
+  assert.equal(h.client.entities.has("entity:c"), false);
+  assert.equal(staleCount(h), 1);
+  assert.equal(h.client.subscriptionId, S0);
+});
+
+test("B1: an unmatched subscription.applied neither settles nor disturbs an unrelated pending subscription.set", async () => {
+  const h = harness();
+  await live(h, [cube("entity:a")]);
+  const pending = h.client.setSubscription({ entities: ["entity:a"] });
+  const ref = lastSent(h).id as string;
+
+  h.socket.deliver(applied("req:other", S0, "subscription:rogue", 20));
+  assert.equal(h.client.subscriptionId, S0);
+  assert.equal(h.client.pendingRequestCount, 1);
+  assert.equal(activations(h).length, 0);
+
+  // A later publication of the real, still-active generation applies; the request settles from its own response.
+  h.socket.deliver(created(cube("entity:b", 2), 21));
+  assert.ok(h.client.entities.has("entity:b"));
+  h.socket.deliver(applied(ref, S0, "subscription:s1", 22, { entities: ["entity:a"] }));
+  const result = await pending;
+  assert.equal(result.activated, true);
+  assert.equal(h.client.subscriptionId, "subscription:s1");
+  assert.equal(activations(h).length, 1);
+});
+
+test("B1: a duplicate terminal response for an already-settled request is inert", async () => {
+  const h = harness();
+  await live(h, [cube("entity:a")]);
+  const pending = h.client.setSubscription({ entities: ["entity:a"] });
+  const ref = lastSent(h).id as string;
+  h.socket.deliver(applied(ref, S0, "subscription:s1", 20, { entities: ["entity:a"] }));
+  assert.equal((await pending).activated, true);
+
+  h.socket.deliver(applied(ref, S0, "subscription:s1", 20, { entities: ["entity:a"] }));
+  // Even a duplicate that formally continues from the (new) active generation must not activate again.
+  h.socket.deliver(applied(ref, "subscription:s1", "subscription:s2", 21, {}));
+  assert.equal(h.client.phase, "live");
+  assert.equal(h.client.subscriptionId, "subscription:s1");
+  assert.deepEqual(h.client.effectiveSubscription, { entities: ["entity:a"] });
+  assert.equal(activations(h).length, 1);
+});
+
+test("B1: a matching subscription.set response whose previousSubscriptionId is superseded settles but never reactivates", async () => {
+  const h = harness();
+  await live(h, [cube("entity:e")]);
+  const r1 = h.client.setSubscription({});
+  const ref1 = lastSent(h).id as string;
+  h.socket.deliver(applied(ref1, S0, "subscription:s1", 20));
+  h.socket.deliver(leave("entity:e", 20, "subscription:s1", "subscription"));
+  await r1;
+  const r2 = h.client.setSubscription({ entities: ["entity:e"] });
+  const ref2 = lastSent(h).id as string;
+  h.socket.deliver(applied(ref2, "subscription:s1", "subscription:s2", 21, { entities: ["entity:e"] }));
+  h.socket.deliver(enter(cube("entity:e"), 21, "subscription:s2", "subscription"));
+  await r2;
+  assert.equal(activations(h).length, 2);
+
+  // Cached responses for older transitions reach still-pending requests: S1 → S2 and S0 → S1 are both history.
+  for (const [previous, next] of [["subscription:s1", "subscription:s3"], [S0, "subscription:s1"]] as const) {
+    const late = h.client.setSubscription({});
+    const lateRef = lastSent(h).id as string;
+    h.socket.deliver(applied(lateRef, previous, next, 22));
+    const result = await late;
+    assert.equal(result.activated, false);
+    assert.equal(result.body.subscriptionId, next);
+    assert.equal(h.client.subscriptionId, "subscription:s2");
+    assert.deepEqual(h.client.effectiveSubscription, { entities: ["entity:e"] });
+    assert.deepEqual(ids(h), ["entity:e", PRESENCE]);
+  }
+  assert.equal(activations(h).length, 2);
+  // S1 traffic stays stale after the cached S1 response; S2 traffic keeps applying.
+  h.socket.deliver(leave("entity:e", 23, "subscription:s1"));
+  assert.deepEqual(ids(h), ["entity:e", PRESENCE]);
+  assert.equal(staleCount(h), 1);
+  h.socket.deliver(updated("entity:e", "hvtp.transform@1", transformValue(5, 2), 24, "subscription:s2"));
+  assert.equal((h.client.entities.get("entity:e") as any).components["hvtp.transform@1"].revision, 2);
+});
+
+test("B1: a subscription.applied whose ref matches a pending non-subscription request is a host protocol violation and never activates", async () => {
+  for (const start of [
+    (h: Harness) => h.client.createEntity({ id: "entity:new", transform: { position: [1, 0.5, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] },
+      material: { baseColor: [1, 1, 1, 1] } }),
+    (h: Harness) => h.client.deleteEntity("entity:a"),
+    (h: Harness) => h.client.patchComponent("entity:a", "hvtp.transform@1", { position: [2, 0.5, 0] }),
+  ]) {
+    const h = harness();
+    await live(h, [cube("entity:a")]);
+    const request = start(h);
+    const outcome = assert.rejects(request, P1OutcomeUncertainError);
+    h.socket.deliver(applied(lastSent(h).id as string, S0, "subscription:rogue", 20));
+    const violation = h.events.find((e) => e.type === "protocol.violation");
+    assert.ok(violation && /subscription\.applied received for a .* request/.test((violation as any).error.message));
+    assert.equal(activations(h).length, 0);
+    assert.equal(h.client.phase, "disconnected");
+    assert.equal(h.socket.closed?.code, 4002);
+    // The session is torn down like any other contradictory host frame: nothing of the rogue generation survives.
+    assert.equal(h.client.subscriptionId, null);
+    assert.equal(h.client.entities.size, 0);
+    await outcome;
+  }
+});
+
+test("B1: positive control — a matching pending subscription.set from the active generation activates exactly once", async () => {
+  const h = harness();
+  await live(h, [cube("entity:a")]);
+  const pending = h.client.setSubscription({ entities: ["entity:a"] });
+  const ref = lastSent(h).id as string;
+  assert.equal(h.client.pendingRequestCount, 1);
+  h.socket.deliver(applied(ref, S0, "subscription:s1", 20, { entities: ["entity:a"] }));
+  const result = await pending;
+  assert.equal(result.activated, true);
+  assert.equal(h.client.pendingRequestCount, 0);
+  assert.equal(h.client.subscriptionId, "subscription:s1");
+  assert.deepEqual(h.client.effectiveSubscription, { entities: ["entity:a"] });
+  assert.deepEqual(activations(h).map((e) => e.type === "subscription.activated" && [e.previousSubscriptionId, e.subscriptionId]),
+    [[S0, "subscription:s1"]]);
+  // The previous generation is now stale.
+  h.socket.deliver(created(cube("entity:b"), 21, S0));
+  assert.equal(h.client.entities.has("entity:b"), false);
+});
+
 // ---------------------------------------------------------------------------------------------------------------
 // Requests, terminal results, and reconnect uncertainty (C12, C13)
 // ---------------------------------------------------------------------------------------------------------------

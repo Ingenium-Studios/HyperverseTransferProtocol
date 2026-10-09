@@ -60,8 +60,9 @@ export type P1Ack = MutationAckMessage["body"];
 export interface P1SubscriptionResult {
   readonly body: SubscriptionAppliedMessage["body"];
   /**
-   * True only when this response's `previousSubscriptionId` equalled the active generation, so the new
-   * generation was activated. A stale/cached response is terminal information only and is `false`.
+   * True only when this response answered the pending request and its `previousSubscriptionId` equalled the
+   * active generation, so the new generation was activated. A stale/cached response is terminal information
+   * only and is `false`.
    */
   readonly activated: boolean;
 }
@@ -438,12 +439,19 @@ export class P1Client {
     this.#publication(message);
   }
 
-  /** Activation rule (Profile §10.1): only a transition from the active generation may activate. */
+  /**
+   * Activation rule (Profile §10.1, C28). A response may activate a generation only when it answers a pending
+   * `subscription.set` AND continues from the currently active generation with a new subscription ID. A response
+   * that answers nothing in flight (e.g. a duplicate terminal response for a settled retransmission) is inert
+   * terminal noise, like an unmatched `ack`; a response for another request kind contradicts the host contract.
+   */
   #subscriptionApplied(message: SubscriptionAppliedMessage): void {
     const body = message.body;
-    const activated = body.previousSubscriptionId === this.#subscriptionId && body.subscriptionId !== this.#subscriptionId;
     const pending = this.#pending.get(body.ref);
-    if (pending !== undefined && pending.type !== "subscription.set") violation(`subscription.applied received for a ${pending.type} request.`);
+    if (pending === undefined) return;
+    if (pending.type !== "subscription.set") violation(`subscription.applied received for a ${pending.type} request.`);
+    // A cached response for an older, already-superseded transition fails this test: terminal information only.
+    const activated = body.previousSubscriptionId === this.#subscriptionId && body.subscriptionId !== this.#subscriptionId;
     if (activated) {
       this.#subscriptionId = body.subscriptionId;
       this.#effectiveSubscription = body.effectiveSubscription;
@@ -451,10 +459,8 @@ export class P1Client {
       this.#emit({ type: "subscription.activated", previousSubscriptionId: body.previousSubscriptionId,
         subscriptionId: body.subscriptionId, effectiveSubscription: body.effectiveSubscription });
     }
-    if (pending !== undefined) {
-      this.#pending.delete(body.ref);
-      pending.resolve({ body, activated } satisfies P1SubscriptionResult as never);
-    }
+    this.#pending.delete(body.ref);
+    pending.resolve({ body, activated } satisfies P1SubscriptionResult as never);
   }
 
   /**
