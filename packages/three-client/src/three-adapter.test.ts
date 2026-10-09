@@ -485,3 +485,24 @@ test("I3: repeated reconnect, leave/re-enter, delete, and placeholder cycles dis
     tracker.restore();
   }
 });
+
+test("attach handles a source that emits synchronously inside on()", async () => {
+  const entity = deepFreeze(cube("entity:sync-emit"));
+  let listeners = 0;
+  const source = {
+    assetBaseUri: null, limits: null,
+    on(listener: (event: never) => void) {
+      listeners += 1;
+      listener({ type: "view.reset", reason: "snapshot", entities: new Map([[entity.id, entity]]) } as never);
+      return () => { listeners -= 1; };
+    },
+  };
+  const view = new P1ThreeView();
+  const detach = view.attach(source);
+  assert.equal(view.size, 1, "the synchronous reset materialized the entity");
+  await view.whenIdle();
+  detach();
+  assert.equal(view.size, 0);
+  assert.equal(listeners, 0, "detach unsubscribed the synchronously-emitting source");
+  view.dispose();
+});

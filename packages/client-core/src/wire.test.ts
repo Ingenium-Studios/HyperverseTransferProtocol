@@ -107,3 +107,8 @@ test("parseHostMessage rejects unknown or non-string transition reasons on both 
   delete missing.body.reason;
   assert.throws(() => parseHostMessage(JSON.stringify(missing)), violates(/closed P1 shape/));
 });
+
+test("hasDuplicateJsonKey terminates on unparsed text with an unterminated string", () => {
+  assert.equal(hasDuplicateJsonKey('"abc'), false);
+  assert.equal(hasDuplicateJsonKey('{"a":"x\\"'), false);
+});

@@ -40,7 +40,8 @@ export function hasDuplicateJsonKey(text: string): boolean {
     const ch = text[index]!;
     if (ch === '"') {
       const start = index;
-      for (index += 1; text[index] !== '"'; index += 1) if (text[index] === "\\") index += 1;
+      for (index += 1; index < text.length && text[index] !== '"'; index += 1) if (text[index] === "\\") index += 1;
+      if (index >= text.length) return false; // unterminated string: not JSON, so JSON.parse rejects it first
       const scope = scopes.at(-1);
       if (scope?.expectKey) {
         const key = JSON.parse(text.slice(start, index + 1)) as string;
