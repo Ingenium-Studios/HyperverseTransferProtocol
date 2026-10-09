@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import WebSocket, { type RawData } from "ws";
 import { P1_REALM_ID } from "@hvtp/protocol-types";
-import type { ReferenceHost } from "./server.js";
+import { createReferenceHost, type ReferenceHost, type ReferenceHostOptions } from "./server.js";
 
 export interface Wire {
   type: string;
@@ -63,6 +63,11 @@ export function manualClock(start = 0) {
   return { now: () => current, advance(ms: number) { current += ms; } };
 }
 
+let fenceCounter = 0;
+
+/** Deterministic clock that never fills a 1-second rate window (rate behaviour has its own tests). */
+export const fastClock = (): (() => number) => { let tick = 0; return () => (tick += 1000); };
+
 /** WebSocket test client that queues every received message and records the close code. */
 export class Peer {
   readonly messages: Wire[] = [];
@@ -99,6 +104,22 @@ export class Peer {
     await new Promise<void>((resolve) => { this.socket.once("pong", () => resolve()); this.socket.ping(); });
   }
 
+  /**
+   * Deterministic quiet-period marker: an invalid-state request is answered in order behind every frame the host
+   * already queued for this peer. Returns the frames that arrived before the marker reply (no timers).
+   */
+  async fence(host?: ReferenceHost): Promise<Wire[]> {
+    if (host !== undefined) await host.realmCoordinator.drain();
+    const marker = `fence-${++fenceCounter}`;
+    this.send({ ...helloMessage(), id: marker });
+    const events: Wire[] = [];
+    for (;;) {
+      const message = await this.next();
+      if (message.type === "error" && message.body.ref === marker) return events;
+      events.push(message);
+    }
+  }
+
   async request(request: unknown): Promise<Wire> {
     this.send(request);
     return await this.next();
@@ -130,5 +151,44 @@ export async function joinedPeer(host: ReferenceHost, subscription: Record<strin
   const peer = await connect(host);
   await peer.hello();
   await peer.join(subscription);
+  return peer;
+}
+
+export async function startHost(options: ReferenceHostOptions = {}): Promise<ReferenceHost> {
+  return await createReferenceHost({ clock: fastClock(), databasePath: ":memory:", ...options });
+}
+
+/** Run `run` against a fresh in-memory host that is always closed afterwards. */
+export async function withHost(run: (host: ReferenceHost) => Promise<void>, options: ReferenceHostOptions = {}): Promise<void> {
+  const host = await startHost(options);
+  try { await run(host); } finally { await host.close(); }
+}
+
+/** Join and return every message through `realm.snapshot.end` (or the error that refused the join). */
+export async function joinCollect(peer: Peer, subscription: Record<string, unknown> = {}, id = "join"): Promise<Wire[]> {
+  peer.send(joinMessage(id, subscription));
+  const result: Wire[] = [];
+  do { result.push(await peer.next()); } while (result.at(-1)!.type !== "realm.snapshot.end" && result.at(-1)!.type !== "error");
+  return result;
+}
+
+/** IDs of non-presence entities in a snapshot, sorted. */
+export function snapshotSharedIds(messages: readonly Wire[]): string[] {
+  return messages.filter((m) => m.type === "entity.snapshot")
+    .map((m) => m.body.entity as { id: string; components: Record<string, unknown> })
+    .filter((entity) => !Object.hasOwn(entity.components, "hvtp.presence@1"))
+    .map((entity) => entity.id).sort();
+}
+
+/** Replace the first `placeholder` in the serialized request with a raw JSON literal such as `1e400`. */
+export function withLiteral(request: unknown, placeholder: string, literal: string): string {
+  const text = JSON.stringify(request);
+  assert.ok(text.includes(placeholder), `placeholder ${placeholder} missing`);
+  return text.replace(placeholder, literal);
+}
+
+export async function connectedPeer(host: ReferenceHost): Promise<Peer> {
+  const peer = await connect(host);
+  await peer.hello();
   return peer;
 }
