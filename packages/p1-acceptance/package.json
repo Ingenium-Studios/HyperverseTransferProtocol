@@ -1,0 +1,20 @@
+{
+  "name": "@hvtp/p1-acceptance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Test-only P1 acceptance package: Prototype Profile section 16 happy path and cross-component real-host evidence.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/*.test.js"
+  },
+  "devDependencies": {
+    "@hvtp/agent-client": "0.1.0",
+    "@hvtp/client-core": "0.1.0",
+    "@hvtp/protocol-types": "0.1.0",
+    "@hvtp/reference-host": "0.1.0",
+    "@hvtp/three-client": "0.1.0",
+    "@types/three": "0.186.0",
+    "three": "0.186.1"
+  }
+}
