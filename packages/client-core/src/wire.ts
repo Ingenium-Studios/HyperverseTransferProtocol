@@ -165,7 +165,7 @@ function publication(message: JsonObject, type: P1PublicationType): CanonicalPub
       break;
     case "view.entity.enter":
       closed(body, ["subscriptionId", "reason", "entity"], [], type);
-      leaveEnterReason(body.reason);
+      enterReason(body.reason);
       viewEntity(body.entity);
       break;
     case "component.updated": {
@@ -182,7 +182,7 @@ function publication(message: JsonObject, type: P1PublicationType): CanonicalPub
       break;
     case "view.entity.leave":
       closed(body, ["subscriptionId", "reason", "entityId"], [], type);
-      leaveEnterReason(body.reason);
+      leaveReason(body.reason);
       opaque(body.entityId, "entityId");
       break;
   }
@@ -203,8 +203,13 @@ function realmIdentity(message: JsonObject): void {
   opaque(message.realmEpoch, "realmEpoch");
 }
 
-function leaveEnterReason(value: unknown): void {
-  if (value !== "subscription" && value !== "interest" && value !== "authorization") violation("Invalid view transition reason.");
+function enterReason(value: unknown): void {
+  if (value !== "subscription" && value !== "interest") violation("Invalid view.entity.enter reason.");
+}
+
+/** `authorization` is a leave-only reason (§14.15); the P1 enter reasons are `subscription` and `interest`. */
+function leaveReason(value: unknown): void {
+  if (value !== "subscription" && value !== "interest" && value !== "authorization") violation("Invalid view.entity.leave reason.");
 }
 
 function mutableComponentName(value: unknown): P1MutableComponent {

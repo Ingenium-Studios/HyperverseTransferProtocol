@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { CanonicalPublicationMessage } from "@hvtp/protocol-types";
 import { P1ProtocolViolationError } from "./errors.js";
 import { hasDuplicateJsonKey, parseJsonObject } from "./json.js";
 import { parseHostMessage } from "./wire.js";
-import { created, cube, hostError } from "./test-support.js";
+import { created, cube, enter, hostError, leave } from "./test-support.js";
 
 const violates = (pattern: RegExp) => (error: unknown) => error instanceof P1ProtocolViolationError && pattern.test(error.message);
 
@@ -66,4 +67,43 @@ test("parseHostMessage still rejects duplicate decoded keys in host frames", () 
   assert.throws(() => parseHostMessage(frame.replace('"body":{', '"body":{"subscriptionId":"subscription:other",')), violates(/duplicate JSON object key/i));
   assert.throws(() => parseHostMessage("[]"), violates(/JSON object/));
   assert.throws(() => parseHostMessage("{nope"), violates(/valid JSON/));
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// View transition reasons (Profile §14.14, §14.15)
+// ---------------------------------------------------------------------------------------------------------------
+
+type PublicationBody<T extends CanonicalPublicationMessage["type"]> = Extract<CanonicalPublicationMessage, { type: T }>["body"];
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+
+test("type level: view.entity.leave allows subscription | interest | authorization; view.entity.enter only subscription | interest", () => {
+  // These assignments only compile while the protocol types are exactly the profile's reason sets.
+  const leaveReasonsAreExact: Equal<PublicationBody<"view.entity.leave">["reason"], "subscription" | "interest" | "authorization"> = true;
+  const enterReasonsAreExact: Equal<PublicationBody<"view.entity.enter">["reason"], "subscription" | "interest"> = true;
+  assert.deepEqual([leaveReasonsAreExact, enterReasonsAreExact], [true, true]);
+});
+
+test("parseHostMessage accepts leave reasons subscription, interest, and authorization", () => {
+  for (const reason of ["subscription", "interest", "authorization"]) {
+    const message = parseHostMessage(JSON.stringify(leave("entity:a", 12, "subscription:s0", reason)));
+    assert.equal(message.type, "view.entity.leave");
+    assert.equal(message.type === "view.entity.leave" && message.body.reason, reason);
+  }
+});
+
+test("parseHostMessage accepts enter reasons subscription and interest but rejects authorization", () => {
+  for (const reason of ["subscription", "interest"]) {
+    assert.equal(parseHostMessage(JSON.stringify(enter(cube("entity:a"), 12, "subscription:s0", reason))).type, "view.entity.enter");
+  }
+  assert.throws(() => parseHostMessage(JSON.stringify(enter(cube("entity:a"), 12, "subscription:s0", "authorization"))), violates(/enter reason/));
+});
+
+test("parseHostMessage rejects unknown or non-string transition reasons on both enter and leave", () => {
+  for (const reason of ["", "Authorization", "eviction", 3, null, ["interest"]]) {
+    assert.throws(() => parseHostMessage(JSON.stringify(leave("entity:a", 12, "subscription:s0", reason as never))), violates(/leave reason/), JSON.stringify(reason));
+    assert.throws(() => parseHostMessage(JSON.stringify(enter(cube("entity:a"), 12, "subscription:s0", reason as never))), violates(/enter reason/), JSON.stringify(reason));
+  }
+  const missing = leave("entity:a", 12) as { body: Record<string, unknown> };
+  delete missing.body.reason;
+  assert.throws(() => parseHostMessage(JSON.stringify(missing)), violates(/closed P1 shape/));
 });

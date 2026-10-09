@@ -242,6 +242,33 @@ test("view.entity.leave evicts without a tombstone and view.entity.enter remater
     ["leave", "enter", "enter"]);
 });
 
+test("a view.entity.leave with reason authorization evicts the entity without a tombstone", async () => {
+  const h = harness();
+  await live(h, [cube("entity:a"), cube("entity:b")]);
+  h.socket.deliver(leave("entity:a", 11, S0, "authorization"));
+  assert.equal(h.client.phase, "live");
+  assert.equal(h.events.some((e) => e.type === "protocol.violation"), false);
+  assert.deepEqual(ids(h), ["entity:b", PRESENCE]);
+  assert.deepEqual(h.events.filter((e) => e.type === "entity.remove").map((e) => [(e as any).cause, (e as any).entityId]), [["leave", "entity:a"]]);
+
+  // No tombstone: authorization can be regained, and the complete enter record rematerializes the entity.
+  h.socket.deliver(enter(cube("entity:a", 6, { transform: 3 }), 12, S0, "interest"));
+  assert.equal((h.client.entities.get("entity:a") as any).components["hvtp.transform@1"].revision, 3);
+  assert.deepEqual(ids(h), ["entity:a", "entity:b", PRESENCE]);
+});
+
+test("a view.entity.enter with reason authorization is a protocol violation and changes nothing", async () => {
+  const h = harness();
+  await live(h, [cube("entity:a")]);
+  h.socket.deliver(enter(cube("entity:b"), 11, S0, "authorization"));
+  const violation = h.events.find((e) => e.type === "protocol.violation");
+  assert.ok(violation && /enter reason/.test((violation as any).error.message));
+  assert.equal(h.events.some((e) => e.type === "entity.upsert"), false);
+  assert.equal(h.client.phase, "disconnected");
+  assert.equal(h.client.entities.size, 0);
+  assert.equal(h.socket.closed?.code, 4002);
+});
+
 test("entity.deleted removes the entity from the active view", async () => {
   const h = harness();
   await live(h, [cube("entity:a"), cube("entity:b")]);
