@@ -15,6 +15,8 @@ A section appearing under **Unreleased** is not a claim that it has shipped. Git
 - Clients can change what part of the realm they are interested in without confusing “leaving my view” with deleting an entity for everyone.
 - The host advertises and serves a portable one-metre glTF cube fixture for interoperability testing.
 
+- An experimental browser reference client shows the shared P1 realm in 3D, and a reusable engine-neutral client core lets other participants (such as headless agents) join the same realm without a renderer. *(In review; not merged.)*
+
 ### Reliability and behavior
 
 - Concurrent edits use explicit revision checks instead of silent last-writer-wins behavior.
