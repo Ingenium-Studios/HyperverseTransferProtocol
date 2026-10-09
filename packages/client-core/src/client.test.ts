@@ -632,3 +632,109 @@ test("host frames that are not valid P1 JSON close the connection", async () => 
     assert.equal(h.socket.closed?.code, 4002);
   }
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// Host-generated IDs are opaque (Profile §14.0): the 128-byte rule is for client-generated IDs only
+// ---------------------------------------------------------------------------------------------------------------
+
+const utf8Bytes = (text: string) => new TextEncoder().encode(text).byteLength;
+// Each is longer than 128 UTF-8 bytes; the multibyte ones are under 128 UTF-16 code units, so only a byte count rejects them.
+const longHostIds: Array<[string, string]> = [
+  ["129 ASCII bytes", "h".repeat(129)],
+  ["200 ASCII bytes", "host-publication-".padEnd(200, "x")],
+  ["200 bytes of 2-byte characters (100 code units)", "é".repeat(100)],
+  ["160 bytes of 4-byte characters (80 code units)", "\u{1F600}".repeat(40)],
+  ["200 000 bytes (inside maxMessageBytes)", "é".repeat(100_000)],
+];
+
+test("host-generated top-level IDs longer than 128 UTF-8 bytes are accepted on every host frame kind", async () => {
+  for (const [label, id] of longHostIds) {
+    assert.ok(utf8Bytes(id) > 128, label);
+    const h = harness();
+    const ready = h.client.connect();
+    h.socket.open();
+    h.socket.deliver({ ...welcome(), id });
+    h.socket.deliver({ ...joined(), id });
+    h.socket.deliver({ ...begin(), id });
+    h.socket.deliver({ ...snapshotEntity(cube("entity:a")), id });
+    h.socket.deliver({ ...snapshotEntity(presence()), id });
+    h.socket.deliver({ ...end(2), id });
+    await ready;
+    assert.equal(h.client.phase, "live", label);
+    assert.deepEqual(ids(h), ["entity:a", PRESENCE], label);
+
+    h.socket.deliver({ ...created(cube("entity:b", 2), 11), id });
+    h.socket.deliver({ ...updated("entity:b", "hvtp.transform@1", transformValue(3, 2), 12), id });
+    h.socket.deliver({ ...leave("entity:b", 13), id });
+    h.socket.deliver({ ...enter(cube("entity:b", 4, { transform: 3 }), 14), id });
+    h.socket.deliver({ ...deleted("entity:a", 15), id });
+    h.socket.deliver({ ...hostError(null, "resource_limit"), id });
+    assert.equal(h.client.phase, "live", label);
+    assert.equal(h.events.some((e) => e.type === "protocol.violation"), false, label);
+    assert.deepEqual(ids(h), ["entity:b", PRESENCE], label);
+    assert.equal((h.client.entities.get("entity:b") as any).components["hvtp.transform@1"].revision, 3, label);
+    assert.ok(h.events.some((e) => e.type === "host.error"), label);
+
+    // Terminal responses carrying long host IDs still settle their requests.
+    const move = h.client.patchComponent("entity:b", "hvtp.transform@1", { position: [9, 0.5, 0] });
+    h.socket.deliver({ ...ack(lastSent(h).id as string, 16, "entity:b", { component: "hvtp.transform@1", revision: 4, authorityEpoch: 1 }), id });
+    assert.equal((await move).revision, 4);
+    const sub = h.client.setSubscription({});
+    h.socket.deliver({ ...applied(lastSent(h).id as string, S0, "subscription:s1", 17), id });
+    assert.equal((await sub).activated, true);
+    assert.equal(h.client.phase, "live", label);
+    h.client.disconnect();
+  }
+});
+
+test("a host frame with an empty, missing, or non-string top-level id is a protocol violation", async () => {
+  const variants: Array<[string, (message: Record<string, unknown>) => Record<string, unknown>]> = [
+    ["empty id", (message) => ({ ...message, id: "" })],
+    ["missing id", ({ id: _id, ...rest }) => rest],
+    ["numeric id", (message) => ({ ...message, id: 7 })],
+    ["null id", (message) => ({ ...message, id: null })],
+  ];
+  for (const [label, mutate] of variants) {
+    const h = harness();
+    await live(h, [cube("entity:a")]);
+    h.socket.deliver(mutate(created(cube("entity:b"), 11)));
+    assert.ok(h.events.some((e) => e.type === "protocol.violation"), label);
+    assert.equal(h.client.phase, "disconnected", label);
+    assert.equal(h.socket.closed?.code, 4002, label);
+    assert.equal(h.client.entities.size, 0, label);
+  }
+});
+
+test("duplicate decoded keys in a host frame are still rejected, at the top level and in nested objects", async () => {
+  const frame = JSON.stringify(created(cube("entity:b"), 11));
+  const duplicates: Array<[string, string]> = [
+    ["escaped duplicate of the top-level id", frame.replace('"id":', '"\\u0069d":"other","id":')],
+    ["literal duplicate of type", frame.replace('"type":"entity.created"', '"type":"entity.created","type":"entity.deleted"')],
+    ["duplicate in body", frame.replace('"body":{', '"body":{"subscriptionId":"subscription:other",')],
+    ["escaped duplicate deep in an entity", frame.replace('"revision":1', '"revision":1,"re\\u0076ision":2')],
+    ["duplicate in a later array element", frame.replace('"position":[0,0.5,0]', '"position":[1,{"a":1},{"b":1,"b":2}]')],
+  ];
+  for (const [label, text] of duplicates) {
+    assert.notEqual(text, frame, `${label}: fixture edit must apply`);
+    assert.doesNotThrow(() => JSON.parse(text), label);
+    const h = harness();
+    await live(h, [cube("entity:a")]);
+    h.socket.deliver(text);
+    const violation = h.events.find((e) => e.type === "protocol.violation");
+    assert.ok(violation && /duplicate JSON object key/i.test((violation as any).error.message), `${label}: ${(violation as any)?.error?.message}`);
+    assert.equal(h.client.phase, "disconnected", label);
+    assert.equal(h.socket.closed?.code, 4002, label);
+  }
+
+  // The same rule holds while joining: a duplicate key inside the nested effectiveSubscription of realm.joined.
+  const h = harness();
+  const ready = h.client.connect();
+  h.socket.open();
+  h.socket.deliver(welcome());
+  const joinedFrame = JSON.stringify(joined(META, { spatial: { center: [0, 0, 0], radius: 100 } }))
+    .replace('"radius":100', '"radius":100,"radius":5');
+  assert.match(joinedFrame, /"radius":5/);
+  h.socket.deliver(joinedFrame);
+  await assert.rejects(ready, (error: unknown) => error instanceof P1ConnectionError && /duplicate JSON object key/i.test(String((error.cause as Error)?.message)));
+  assert.equal(h.client.phase, "disconnected");
+});

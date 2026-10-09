@@ -1,5 +1,5 @@
 import {
-  HVTP_VERSION, P1_LIMITS, P1_POSITION_LIMIT_METERS, P1_REALM_ID, parseJsonRequest,
+  HVTP_VERSION, P1_LIMITS, P1_POSITION_LIMIT_METERS, P1_REALM_ID,
   type CanonicalPublicationMessage, type EntitySnapshotMessage, type ErrorMessage, type MutationAckMessage,
   type P1ComponentEnvelope, type P1MaterialState, type P1MutableComponent, type P1PresenceEntity,
   type P1RenderableState, type P1SharedEntity, type P1TransformState, type RealmJoinedMessage,
@@ -7,6 +7,7 @@ import {
   type SubscriptionAppliedMessage, type SubscriptionSelector,
 } from "@hvtp/protocol-types";
 import { P1ProtocolViolationError } from "./errors.js";
+import { parseJsonObject } from "./json.js";
 
 /** Canonical client view record: exactly the structured HVTP entity, never a renderer object. */
 export type P1ViewEntity = P1SharedEntity | P1PresenceEntity;
@@ -37,9 +38,9 @@ export const P1_FIXTURE_RENDERABLE = { uri: "unit-cube.gltf", mediaType: "model/
  * contract throws `P1ProtocolViolationError`; the client never repairs host output.
  */
 export function parseHostMessage(text: string): P1HostMessage {
-  const parsed = parseJsonRequest(text);
-  if (!parsed.ok) violation(`Host message rejected: ${parsed.error.message}`);
-  const message = parsed.value;
+  const message = parseJsonObject(text);
+  // Host-generated IDs are opaque to clients (§14.0): unlike a client request ID, no length bound applies.
+  opaque(message.id, "message id");
   if (message.hvtp !== HVTP_VERSION) violation("Host message is not HVTP 0.2.");
   const type = message.type;
   switch (type) {
