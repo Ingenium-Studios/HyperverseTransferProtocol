@@ -285,7 +285,7 @@ Two new packages consume the host strictly over the P1 wire:
 
 | Package | Role | Depends on Three.js? |
 | --- | --- | --- |
-| `@hvtp/client-core` | P1 session lifecycle, wire validation, atomic snapshots, canonical entity view, subscription generations, request correlation, reconnect uncertainty | **No.** Runs in browsers and Node; reusable by the future headless agent |
+| `@hvtp/client-core` | P1 session lifecycle, wire validation, atomic snapshots, canonical entity view, subscription generations, request correlation, reconnect uncertainty | **No.** Runs in browsers and Node; reused by the headless agent (`@hvtp/agent-client`) |
 | `@hvtp/three-client` | Three.js adapter (`P1ThreeView`), fixture loader, placeholder, runnable browser demo | Yes, behind the adapter only |
 
 No `THREE.*` type appears in protocol messages, canonical entity state, or `client-core` state. The renderer receives a read-only view source (`on`, `assetBaseUri`, `limits`) with no request methods, so a presentation failure cannot become a shared mutation.
@@ -361,14 +361,18 @@ Node lacks the browser `ProgressEvent` global that `GLTFLoader`'s `FileLoader` u
 
 #### Status and deferred work
 
-This is **not yet a fully P1-conformant implementation** and does not claim P1 conformance. Host tests cover the host-side lifecycle/resource cases in C07/C08/C21/C22/C24/C28/C30/C31/C32/C33/C36 plus the host-applicable parts of C34. Slice 7 adds client-side evidence for C12, C13, C17, C18, C28 stale-generation and cached-response rejection, C30 snapshot-metadata rejection, C34 renderer-local asset behavior, and happy-path steps 1–12.
+This development line does **not** claim P1 conformance until the reference-applicable conformance matrix and its review are complete and the work is merged. Host tests cover host-side lifecycle/resource cases; Slice 7 adds client-side evidence (C12, C13, C17, C18, C28, C30, C34); Slice 8 adds the headless reference agent (`@hvtp/agent-client`); and `@hvtp/p1-acceptance` runs the complete §16 happy path (steps 1–16, headless agent as a separate process) plus real-host C08/C30, C28 and C12 evidence:
+
+```bash
+npm run acceptance
+```
+
+Additional host-side conformance coverage is in review separately (draft PR #8).
 
 Still deferred:
 
-- the headless P1 reference agent and happy-path steps 13–16;
-- the full host/browser/agent conformance sweep and any gap closure it finds;
-- automated browser smoke tests;
-- an independently implemented second consumer and the C23/C37 interoperability gate. The Three.js client is not that consumer, and sharing `client-core` with the future headless agent does not satisfy it either.
+- automated real-browser smoke tests (the manual browser procedure above covers the browser steps; the automated suite drives the Three.js adapter in Node);
+- an independently implemented second consumer and the C23/C37 interoperability gate. Neither the Three.js client nor the headless agent is that consumer, because both share `client-core`.
 
 The reviewed HVTP 0.2/P1 specification is now merged on `main`; implementation work continues separately in the reference implementation PR.
 
@@ -414,7 +418,8 @@ Several areas remain intentionally unresolved and are listed in the draft specif
   reference-host
   client-core
   three-client
-  agent-client             # future
+  agent-client             # headless reference agent (hvtp-agent CLI)
+  p1-acceptance            # test-only §16 happy path + cross-component evidence
 
 /examples                 # future
 /docs                     # future RFCs and design notes
