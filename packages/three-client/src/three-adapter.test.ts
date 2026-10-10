@@ -68,7 +68,6 @@ test("C17: the renderer maps local [0.5,0.5,0.5] through the loaded UnitCube nod
   view.root.updateMatrixWorld(true);
   const realmPoint = node.localToWorld(new Vector3(0.5, 0.5, 0.5));
   close(realmPoint, [-0.5, 1.0, 0.5]);
-  console.log(`C17 realm point: [${realmPoint.toArray().join(", ")}]`);
   h.client.disconnect();
 });
 
