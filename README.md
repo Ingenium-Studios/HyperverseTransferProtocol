@@ -371,7 +371,7 @@ Additional host-side conformance coverage is in review separately (draft PR #8).
 
 Still deferred:
 
-- automated real-browser smoke tests (a manual real-browser §16 run is documented above; the automated suite drives the Three.js adapter in Node);
+- automated real-browser smoke tests (the manual browser procedure above covers the browser steps; the automated suite drives the Three.js adapter in Node);
 - an independently implemented second consumer and the C23/C37 interoperability gate. Neither the Three.js client nor the headless agent is that consumer, because both share `client-core`.
 
 The reviewed HVTP 0.2/P1 specification is now merged on `main`; implementation work continues separately in the reference implementation PR.
