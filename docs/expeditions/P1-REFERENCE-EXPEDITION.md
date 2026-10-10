@@ -57,11 +57,12 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | M2-IMPL | M2 | Headless agent package, CLI, tests (+ client-core asset policy) | W5 (impl) | validated | `impl/p1-slice-8-headless-agent` (from `fd60fd6`) | M1-REV, M2-D | — | — |
 | M3-HOST | M3 | Close host-side conformance gaps (C02/03/10/14/15/16/17/18/20/24/25/26/27/29/32/34/35) | W4 (impl) | in review | `impl/p1-conformance-host` (from `ac754f5`) | M0-C | Coordinator review; local 114/114 | PR #8 @ `9904792` |
 | M3-CLIENT | M3 | Client-side/cross-component gaps (C08/C30 real-host cut, C28 real-host stale, C12, Three on real host) | W6 (impl) | validated | `impl/p1-acceptance` | M2-IMPL | 8 acceptance tests, 30× stable; CI `38056634725` | PR #10 @ `bd54736` |
-| M3-MATRIX | M3 | Final reviewed conformance matrix on integration head | W7 (discovery) | active | `integration/p1-reference-candidate` @ `7bf1613` | all M3 | — | — |
+| M3-MATRIX | M3 | Final reviewed conformance matrix on integration head | W7 + W4 + Coordinator | validated | `integration/p1-reference-candidate` @ `d41cd38` | all M3 | 31 pass / 4 pass-with-adaptation / 0 incomplete | [evidence/conformance-matrix-final.md](evidence/conformance-matrix-final.md) |
 | M4-AUTO | M4 | Automated §16 happy path | W6 | validated | `impl/p1-acceptance` | M2 | `happy-path.test.ts`; CI `38056634725` | PR #10 |
 | M4-BROWSER | M4 | Real-browser §16 run | Coordinator | validated | PR #6 `8cca804` + agent `c5b71fe` | M2 | [evidence](evidence/browser-acceptance-2026-10-10.md) | `831de1a` |
-| M4-INT | M4 | Integration candidate, combined review, runbook | Coordinator / R3 | active | `integration/p1-reference-candidate` | M1–M3 | local 314/314 | PR #11 @ `7bf1613` |
-| M5 | M5 | Independent consumer (C23/C37) | TBD | deferred | — | M4 gate | — | — |
+| M4-INT | M4 | Integration candidate, combined review, runbook | Coordinator / R3 | validated | `integration/p1-reference-candidate` | M1–M3 | R3 approve-with-nits (doc fixes applied); local 326/326; CI `38057370967` @ `d41cd38` | PR #11 |
+| M4-GATE | M4 | **P1 Reference Implementation Complete — candidate for approved integration** | Coordinator | validated | — | all | see section F | — |
+| M5 | M5 | Independent consumer (C23/C37) | TBD | planned | — | M4 gate (passed) | — | — |
 
 ---
 
@@ -95,6 +96,7 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | Acceptance suite | `impl/p1-acceptance` / PR #10 (draft → agent branch) | `bd54736` | open, unmerged | 279/279; CI `38056634725` green (Linux/Node 22) |
 | Integration candidate | `integration/p1-reference-candidate` / PR #11 (draft → consolidated; not for merge) | `7bf1613` | open | local 314/314 |
 | Slice 7 demo fix | PR #6 | `51ea66d` | open | CI `38005995928` green |
+| **Final heads (2026-10-10)** | PR #6 `8bac544` (CI `38057287536`) · PR #8 `212425b` (CI `38057341063`) · PR #9 `c72fe7e` (CI `38057345997`) · PR #10 `50d54e3` (docs-only after `5a58a0c`, CI `38057347643`) · PR #11 `077b222` (docs-only after `d41cd38`, CI `38057370967`) | | all open, draft, unmerged | integration 326/326 |
 | Releases / tags | — | — | none exist | GitHub API 2026-10-09 |
 
 ---
@@ -113,21 +115,18 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 
 ## F. Continuation handoff
 
-*Last updated: 2026-10-10 (M0–M2 validated; M3/M4 evidence in; final matrix + combined review in progress).*
+*Last updated: 2026-10-10 — primary gate passed; stretch (M5) next.*
 
-**Verified state.** See Artifact ledger. Remote SHAs matched the mandate on 2026-10-09. PR #6 was reconciled with merge `d22ba57` and pushed (fast-forward, no force).
+**Engineering result:** **P1 Reference Implementation Complete — candidate for approved integration.** Not merged, not released, not deployed, not formally accepted.
 
-**Environment.** Node 24 locally (CI Node 22; `engines` ≥ 22.13); npm 11; TypeScript 7.0.2; `npm install && npm test` at repo root runs all workspace suites. Python 3.12 available (candidate for M5 independent consumer). Browser validation available through an in-app browser.
+**Evidence.** Integration head `d41cd38` (PR #11): build incl. Vite bundle; 326/326 tests (protocol-types 13, reference-host 119, client-core 90, three-client 32, agent-client 64, p1-acceptance 8); CI `38057370967` green on Linux/Node 22. Conformance: 35 reference-applicable cases = 31 pass + 4 pass-with-documented-adaptation (C10, C15, C21, C25), 0 incomplete ([matrix](evidence/conformance-matrix-final.md)). §16 happy path: automated (`packages/p1-acceptance/src/happy-path.test.ts`) and real-browser ([run](evidence/browser-acceptance-2026-10-10.md); performed on `8cca804`/`c5b71fe`, later changes were tests/docs/demo-label/robustness). Reviews: R1 (Slice 7 corrections) approve-with-nits; R2 (agent) changes-required → fixed → approve-with-nits; R3 (combined diff) approve-with-nits, doc items fixed.
 
-**Active work.** W1 Slice 7 corrections: B1 `a9baace`, I1 `4f1c859`, I2 `2838817` committed locally (Coordinator-reviewed OK), I3 in progress; nothing pushed yet. W4 host conformance gaps on `impl/p1-conformance-host`. Workers were interrupted once by a usage limit on 2026-10-09 and resumed.
+**Recommended approved-merge order into `impl/p1-reference-slice-1`:** #6 → #9 → #10, and #8 (independent; only `CHANGELOG.md` overlaps, merges cleanly). Close #11 afterwards. Then PR #2 → `main` is a separate approval.
 
-**Unresolved findings.** PR #6 review `5414377372`: B1, I1, I2, I3 (in progress).
+**Approvals pending:** A1 (merge #6), A2 (merge #2), A3 (§14.14 enter-reason wording), A4 (C25 / §14.10 error-code rulings); merges of #8/#9/#10 likewise require approval.
 
-**Approvals pending.** None requested yet (A1/A2 will be requested once their gates pass).
+**Known non-blocking caveats / debt:** single shared duplicate-key scanner for host+client (R1 M2); client does not bound inbound frame size / view size against advertised limits (R1 D2, R3); `package-lock.json` untracked and CI uses `npm install` (recommend committing a lockfile + `npm ci`); `hvtp-agent` bin lacks exec bit (documented invocation uses `node`); Node `fetch` keep-alive reuse after same-port restart (test-only mitigation); P1ThreeView attached to an already-LIVE client renders nothing until the next reset (R1 D1); browser loader has no fetch timeout (optional in shared policy); demo exposes `window.hvtpDemo` (use `.client` for any future browser E2E protocol assertions).
 
-**Next actions.**
-1. Review W1 diff on the exact head; run full build/tests; independent review; push; record CI.
-2. Slice 7 history-doc updates (CHANGELOG `Unreleased`, RELEASE_NOTES `Unreleased`, journal entry update).
-3. Fold W2 inventory into the M3 matrix; cut M2 branch from reviewed Slice 7 head using W3 design.
+**Next actions.** (1) Await human merge decisions. (2) M5 stretch: independent consumer in a different runtime (Python) over captured P1 wire traces for C23/C37; must not reuse client-core, the Three.js adapter, or reducer code.
 
-**Commands.** `git fetch origin && git worktree list`; `npm install --no-audit --no-fund && npm run build && npm test`; `gh pr view 6 -R Ingenium-Studios/HyperverseTransferProtocol`; `gh run list -R Ingenium-Studios/HyperverseTransferProtocol --branch <branch>`.
+**Commands.** `git fetch origin && git worktree list`; in a checkout of `integration/p1-reference-candidate`: `npm install --no-audit --no-fund && npm run build && npm test`; `npm run acceptance`; `gh pr list -R Ingenium-Studios/HyperverseTransferProtocol`.
