@@ -54,10 +54,13 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | M1-DOC | M1 | History/doc impact for Slice 7 | Coordinator | validated | same | M1-B1..I3 | — | `fd60fd6` |
 | M1-REV | M1 | Independent review of corrected Slice 7 head | R1 (Opus reviewer) | validated | — | M1-B1..I3 | APPROVE WITH NITS (0 blocker/important); M1+M4 fixed; M2/M5/D1/D2 deferred | PR #6 comment 6091028188 |
 | M2-D | M2 | Headless agent design + §16 test design | W3 (design) | validated | read-only `6093344` | — | Coordinator review | [evidence/headless-agent-design.md](evidence/headless-agent-design.md) |
-| M2-IMPL | M2 | Headless agent package, CLI, tests (+ client-core asset policy) | W5 (impl) | active | `impl/p1-slice-8-headless-agent` (from `fd60fd6`) | M1-REV, M2-D | — | — |
+| M2-IMPL | M2 | Headless agent package, CLI, tests (+ client-core asset policy) | W5 (impl) | validated | `impl/p1-slice-8-headless-agent` (from `fd60fd6`) | M1-REV, M2-D | — | — |
 | M3-HOST | M3 | Close host-side conformance gaps (C02/03/10/14/15/16/17/18/20/24/25/26/27/29/32/34/35) | W4 (impl) | in review | `impl/p1-conformance-host` (from `ac754f5`) | M0-C | Coordinator review; local 114/114 | PR #8 @ `9904792` |
-| M3-CLIENT | M3 | Client-side/cross-component gaps (C08/C30 real-host cut, C28 real-host stale, Three on real host) | TBD | planned | stacked on Slice 7 | M1-REV | — | — |
-| M4 | M4 | §16 happy path, runbook, acceptance package | TBD | planned | stacked | M2, M3 | — | — |
+| M3-CLIENT | M3 | Client-side/cross-component gaps (C08/C30 real-host cut, C28 real-host stale, C12, Three on real host) | W6 (impl) | validated | `impl/p1-acceptance` | M2-IMPL | 8 acceptance tests, 30× stable; CI `38056634725` | PR #10 @ `bd54736` |
+| M3-MATRIX | M3 | Final reviewed conformance matrix on integration head | W7 (discovery) | active | `integration/p1-reference-candidate` @ `7bf1613` | all M3 | — | — |
+| M4-AUTO | M4 | Automated §16 happy path | W6 | validated | `impl/p1-acceptance` | M2 | `happy-path.test.ts`; CI `38056634725` | PR #10 |
+| M4-BROWSER | M4 | Real-browser §16 run | Coordinator | validated | PR #6 `8cca804` + agent `c5b71fe` | M2 | [evidence](evidence/browser-acceptance-2026-10-10.md) | `831de1a` |
+| M4-INT | M4 | Integration candidate, combined review, runbook | Coordinator / R3 | active | `integration/p1-reference-candidate` | M1–M3 | local 314/314 | PR #11 @ `7bf1613` |
 | M5 | M5 | Independent consumer (C23/C37) | TBD | deferred | — | M4 gate | — | — |
 
 ---
@@ -88,6 +91,10 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 | Slice 7 corrected head | `impl/p1-slice-7-three-client` / PR #6 (draft → consolidated) | `8cca804` | open, unmerged; awaiting Chief re-review | local 176/176 (13+79+54+30); CI `38004772113` green; R1 independent review approve-with-nits |
 | Reporting system | PR #7 | merge `7114288` | merged into consolidated | — |
 | Host conformance | `impl/p1-conformance-host` / PR #8 (draft → consolidated) | `9904792` | open, unmerged | local 114/114 (13+101); one host fix (D6) |
+| Headless agent | `impl/p1-slice-8-headless-agent` / PR #9 (draft → Slice 7 branch) | `7a03bc4` | open, unmerged | 271/271; CI `38056529570` green; R2 review: changes required → fixed → approve-with-nits |
+| Acceptance suite | `impl/p1-acceptance` / PR #10 (draft → agent branch) | `bd54736` | open, unmerged | 279/279; CI `38056634725` green (Linux/Node 22) |
+| Integration candidate | `integration/p1-reference-candidate` / PR #11 (draft → consolidated; not for merge) | `7bf1613` | open | local 314/314 |
+| Slice 7 demo fix | PR #6 | `51ea66d` | open | CI `38005995928` green |
 | Releases / tags | — | — | none exist | GitHub API 2026-10-09 |
 
 ---
@@ -106,7 +113,7 @@ Statuses: `planned`, `active`, `blocked`, `in review`, `correction required`, `v
 
 ## F. Continuation handoff
 
-*Last updated: 2026-10-10 (M0 complete; M1 in review; M3-HOST active).*
+*Last updated: 2026-10-10 (M0–M2 validated; M3/M4 evidence in; final matrix + combined review in progress).*
 
 **Verified state.** See Artifact ledger. Remote SHAs matched the mandate on 2026-10-09. PR #6 was reconciled with merge `d22ba57` and pushed (fast-forward, no force).
 
