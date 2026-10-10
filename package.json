@@ -10,9 +10,13 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build": "npm run build --workspace @hvtp/protocol-types && npm run build --workspace @hvtp/reference-host",
-    "test": "npm run test --workspace @hvtp/protocol-types && npm run test --workspace @hvtp/reference-host",
-    "check": "npm run test"
+    "build": "npm run build --workspace @hvtp/protocol-types && npm run build --workspace @hvtp/reference-host && npm run build --workspace @hvtp/client-core && npm run build --workspace @hvtp/three-client && npm run build --workspace @hvtp/agent-client && npm run build --workspace @hvtp/p1-acceptance",
+    "test": "npm run test --workspace @hvtp/protocol-types && npm run test --workspace @hvtp/reference-host && npm run test --workspace @hvtp/client-core && npm run test --workspace @hvtp/three-client && npm run test --workspace @hvtp/agent-client && npm run test --workspace @hvtp/p1-acceptance",
+    "check": "npm run test",
+    "host": "npm run start --workspace @hvtp/reference-host",
+    "client:dev": "npm run dev --workspace @hvtp/three-client",
+    "agent": "npm run start --workspace @hvtp/agent-client --",
+    "acceptance": "npm run build && npm run test --workspace @hvtp/p1-acceptance"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

@@ -6,6 +6,17 @@ Use it for architectural evolution, meaningful refactors, investigations, migrat
 
 Each entry should state status clearly (for example: investigated, implemented locally, merged to a development branch, released) and reference PRs/issues/commits/ADRs when useful.
 
+## 2026-10-09 to 2026-10-10 — P1 reference implementation expedition: agent, acceptance, conformance
+
+**Status:** completed on branches and in review as draft PRs [#6](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/6), [#8](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/8), [#9](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/9), [#10](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/10) (validated together on integration candidate [#11](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/11)); **not merged, not released**.
+
+- **Stacked delivery while merges are approval-gated.** Slice 8 (#9) is stacked on Slice 7 (#6) and the acceptance suite (#10) on Slice 8, each PR targeting the branch below so its diff contains only its own work; host conformance (#8) is independent. Upstream fixes were carried forward by non-destructive merge commits, never by rebase or force-push.
+- **Headless agent design choice.** The agent (`@hvtp/agent-client`) reuses `client-core` rather than reimplementing the protocol, which keeps it a reference participant but means it cannot serve as the independent C23/C37 consumer. Fixture asset policy moved into `client-core` so browser and headless consumers share one security-relevant implementation.
+- **Review-driven corrections worth remembering.** Moving the asset policy initially made fixture inspection throwable, which regressed the Three.js loader to a stuck `loading` state instead of a placeholder; and the first agent cut had unbounded network waits. Both were caught by independent review and fixed with regression tests. Every agent wait is now bounded, and a timed-out request becomes outcome-uncertain and follows C12 (fresh snapshot, never resend the uncertain ID).
+- **Conformance evidence.** A baseline audit (14 covered / 19 partial / 2 gap of 35 reference-applicable cases) drove ~150 new tests; the final strict audit records 31 pass and 4 pass-with-documented-adaptation (C10 Variant A exercised as a same-burst duplicate because durable mutation processing has no observable pending window; C15/C25 error-code choices pending a spec ruling; C21 entity-size limit unreachable for valid P1 entities). One host defect was found and fixed: `maxAssetUriCharacters` was advertised but not enforced.
+- **Test-infrastructure discovery.** Node's `fetch` keep-alive pool can reuse a dead socket after a same-port host restart, failing the next WebSocket handshake; the acceptance suite disables keep-alive for asset fetches. Browsers are unaffected.
+- **Acceptance.** The §16 happy path passes automatically (Node-hosted Three.js views + agent as a separate process) and in a manual real-browser run.
+
 ## 2026-10-06 — Project history/reporting baseline introduced
 
 **Status:** merged into the consolidated implementation branch via [#7](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/7); not released.
@@ -33,3 +44,5 @@ The initial history below is explicitly reconstructed from existing PR evidence 
 Draft PR [#6](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/6) introduces an engine-neutral client core plus a Three.js browser adapter. Its first reviewed head passed 147 automated tests, but Chief review requested a bounded correction pass before merge, including tighter `subscription.applied` correlation, host-frame ID parsing, transition-reason type alignment, and renderer/asset disposal lifecycle fixes.
 
 This work must not be reported as completed/merged until the PR evidence changes.
+
+**Update 2026-10-10 — correction pass completed on branch; still in review, not merged.** The branch was first reconciled with the consolidated line by a non-destructive merge (no history rewrite). All four review findings were then fixed with regression tests that fail on the previous code: correlated-only subscription activation (an unknown-ref `subscription.applied` is treated as inert terminal noise rather than a protocol violation, because a duplicate terminal response for an already-settled retransmission can legitimately arrive), a host-frame JSON parser that no longer applies client request-ID admission rules, split enter/leave reason sets, and an explicit detach-before-dispose renderer lifecycle with exactly-once template release and a deterministic resource-leak test. Suite grew from 147 to 174 tests.
