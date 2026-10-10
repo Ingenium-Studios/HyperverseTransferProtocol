@@ -17,6 +17,8 @@ A section appearing under **Unreleased** is not a claim that it has shipped. Git
 
 - An experimental browser reference client shows the shared P1 realm in 3D, and a reusable engine-neutral client core lets other participants (such as headless agents) join the same realm without a renderer. *(In review; not merged.)*
 
+- A headless reference agent can join the shared realm from the command line, read a shared object's structured state, and change it safely; browser users see its changes live. *(In review; not merged.)*
+
 ### Reliability and behavior
 
 - Concurrent edits use explicit revision checks instead of silent last-writer-wins behavior.
