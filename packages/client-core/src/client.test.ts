@@ -84,6 +84,41 @@ test("C30: a mismatched snapshotId discards the snapshot without partial activat
   await assertRejectedSnapshot(h, ready, /snapshotId/);
 });
 
+for (const field of ["snapshotId", "snapshotBaseSeq", "subscriptionId", "entityCount"] as const) {
+  test(`C30: a realm.snapshot.end missing ${field} discards the snapshot`, async () => {
+    const h = harness();
+    const ready = negotiate(h);
+    h.socket.deliver(begin());
+    h.socket.deliver(snapshotEntity(cube("entity:a")));
+    h.socket.deliver(snapshotEntity(presence()));
+    const message = structuredClone(end(2)) as Record<string, any>;
+    delete message.body[field];
+    h.socket.deliver(message as never);
+    await assertRejectedSnapshot(h, ready, /closed P1 shape/);
+  });
+}
+
+for (const field of ["snapshotId", "snapshotBaseSeq"] as const) {
+  test(`C30: an entity.snapshot missing ${field} discards the snapshot`, async () => {
+    const h = harness();
+    const ready = negotiate(h);
+    h.socket.deliver(begin());
+    const message = structuredClone(snapshotEntity(cube("entity:a"))) as Record<string, any>;
+    delete message.body[field];
+    h.socket.deliver(message as never);
+    await assertRejectedSnapshot(h, ready, /closed P1 shape/);
+  });
+}
+
+test("C30: a snapshot message missing realmEpoch discards the snapshot", async () => {
+  const h = harness();
+  const ready = negotiate(h);
+  const message = structuredClone(begin()) as Record<string, any>;
+  delete message.realmEpoch;
+  h.socket.deliver(message as never);
+  await assertRejectedSnapshot(h, ready, /closed P1 shape/);
+});
+
 test("C30: a mismatched snapshotBaseSeq discards the snapshot", async () => {
   const h = harness();
   const ready = negotiate(h);
@@ -307,10 +342,15 @@ test("sparse canonical sequences are accepted and never treated as loss", async 
   await live(h, [cube("entity:a")]);
   h.socket.deliver(updated("entity:a", "hvtp.transform@1", transformValue(1, 2), 100));
   h.socket.deliver(updated("entity:a", "hvtp.transform@1", transformValue(2, 3), 103));
+  const sentBefore = h.socket.sent.length;
+  const resetsBefore = h.events.filter((e) => e.type === "view.reset").length;
   h.socket.deliver(created(cube("entity:b"), 9_000));
   assert.equal(h.client.phase, "live");
   assert.equal((h.client.entities.get("entity:a") as any).components["hvtp.transform@1"].revision, 3);
   assert.ok(h.client.entities.has("entity:b"));
+  // No resync: nothing is sent to the host and the view is not reset because of the gaps.
+  assert.equal(h.socket.sent.length, sentBefore);
+  assert.equal(h.events.filter((e) => e.type === "view.reset").length, resetsBefore);
 });
 
 test("legitimate messages sharing one realm seq are all applied, not deduplicated", async () => {
