@@ -14,3 +14,7 @@ export {
   deepFreeze, isPresenceEntity, P1_FIXTURE_RENDERABLE, parseHostMessage, viewEntity,
   type P1HostMessage, type P1Limits, type P1PublicationType, type P1ViewEntity,
 } from "./wire.js";
+export {
+  fetchP1Fixture, inspectP1Fixture, isP1FixtureRenderable, resolveP1AssetUrl,
+  type P1AssetFetchOptions, type P1AssetFetchResult, type P1FetchLike, type P1FixtureInspection,
+} from "./assets.js";
