@@ -35,6 +35,8 @@ Release versions use Semantic Versioning when a real software release boundary i
 - Expanded deterministic unit and real-WebSocket integration coverage across persistence, revision conflicts, request retries, snapshot boundaries, publication ordering, subscription generations, resource exhaustion, malformed input, restart behavior, and failure-after-commit uncertainty. ([#2](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/2), [#3](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/3), [#4](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/4), [#5](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/5))
 - Hardened host failure paths so invalid/oversized WebSocket frames and asset open/read failures do not become process-level unhandled errors. ([#5](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/5))
 
+- Added `@hvtp/p1-acceptance`, a test-only package that runs the complete Prototype Profile §16 happy path against a real host (two Node-hosted client-core + Three.js views, restart on the same SQLite file, headless agent as a separate CLI process over the P1 wire only), plus real-host cross-component evidence for C08/C30 (held snapshot cut), C28 (serialized replacements + injected stale traffic), C12 (lost reply after commit) and the Three.js view lifecycle. `npm run acceptance`. In review in draft PR [#10](https://github.com/Ingenium-Studios/HyperverseTransferProtocol/pull/10); not merged.
+
 ### Release status
 
 - No software version in this changelog has been released yet.
