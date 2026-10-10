@@ -2,4 +2,5 @@ node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
-data/*.sqlite\ndata/*.sqlite-*\n
+**/data/*.sqlite
+**/data/*.sqlite-*

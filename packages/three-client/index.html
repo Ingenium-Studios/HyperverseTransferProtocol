@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HVTP P1 Three.js Reference Client</title>
+    <style>
+      :root { color-scheme: dark; font: 13px/1.4 system-ui, sans-serif; }
+      body { margin: 0; display: grid; grid-template-columns: 320px 1fr; height: 100vh; background: #111; color: #ddd; }
+      aside { padding: 12px; overflow: auto; border-right: 1px solid #333; display: flex; flex-direction: column; gap: 10px; }
+      fieldset { border: 1px solid #333; border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+      legend { color: #999; }
+      input, select, button { font: inherit; }
+      input[type="text"], select { width: 100%; box-sizing: border-box; }
+      .row { display: flex; gap: 6px; flex-wrap: wrap; }
+      #status { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; }
+      #log { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 11px; max-height: 220px; overflow: auto; color: #aaa; }
+      #viewport { position: relative; min-width: 0; }
+      #viewport canvas { display: block; width: 100%; height: 100%; }
+      #banner { position: absolute; top: 8px; left: 8px; padding: 4px 8px; border-radius: 4px; background: #0008; }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <strong>HVTP P1 reference client</strong>
+      <fieldset>
+        <legend>Session</legend>
+        <label>Host WebSocket URL <input id="url" type="text" spellcheck="false" /></label>
+        <div class="row"><button id="connect">Connect</button><button id="disconnect">Disconnect</button></div>
+        <div id="status" data-testid="status">disconnected</div>
+      </fieldset>
+      <fieldset>
+        <legend>Shared entities (host-canonical)</legend>
+        <select id="entities" size="5"></select>
+        <div class="row">
+          <button id="create">Create cube</button>
+          <button id="move">Move +X</button>
+          <button id="color">Random color</button>
+          <button id="delete">Delete</button>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Subscription</legend>
+        <label>Spatial radius around origin (m) <input id="radius" type="number" min="0" max="500" value="100" /></label>
+        <button id="subscribe">Apply subscription</button>
+      </fieldset>
+      <div id="log"></div>
+    </aside>
+    <main id="viewport"><div id="banner">disconnected</div></main>
+    <script type="module" src="/src/demo/main.ts"></script>
+  </body>
+</html>

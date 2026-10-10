@@ -168,6 +168,12 @@ export interface MutationAckMessage {
   };
 }
 
+/** Why an entity entered the effective view (Prototype Profile §14.14). */
+export type ViewEnterReason = "interest" | "subscription";
+
+/** Why an entity left the effective view (Prototype Profile §14.15); `authorization` applies to leave only. */
+export type ViewLeaveReason = ViewEnterReason | "authorization";
+
 export type CanonicalPublicationMessage =
   | {
       readonly hvtp: typeof HVTP_VERSION;
@@ -208,7 +214,7 @@ export type CanonicalPublicationMessage =
       readonly realm: typeof P1_REALM_ID;
       readonly realmEpoch: string;
       readonly seq: number;
-      readonly body: { readonly subscriptionId: string; readonly reason: "interest" | "subscription"; readonly entity: P1SharedEntity };
+      readonly body: { readonly subscriptionId: string; readonly reason: ViewEnterReason; readonly entity: P1SharedEntity };
     }
   | {
       readonly hvtp: typeof HVTP_VERSION;
@@ -217,7 +223,7 @@ export type CanonicalPublicationMessage =
       readonly realm: typeof P1_REALM_ID;
       readonly realmEpoch: string;
       readonly seq: number;
-      readonly body: { readonly subscriptionId: string; readonly reason: "interest" | "subscription"; readonly entityId: string };
+      readonly body: { readonly subscriptionId: string; readonly reason: ViewLeaveReason; readonly entityId: string };
     };
 
 export interface SessionWelcomeMessage {
