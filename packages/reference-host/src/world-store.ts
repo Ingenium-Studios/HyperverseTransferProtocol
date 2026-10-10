@@ -322,6 +322,13 @@ function validateSharedEntityInput(input: P1SharedEntityInput): void {
   validateTransformState(input.transform);
   validateMaterialState(input.material);
 
+  // The advertised URI size bound is a resource limit and is evaluated before the exact-fixture comparison, so an
+  // over-long URI is `resource_limit` while any other non-fixture URI is `invalid_component_state`.
+  const advertisedUri = (input.renderable as { asset?: { uri?: unknown } } | null)?.asset?.uri;
+  if (typeof advertisedUri === "string" && exceedsCodePoints(advertisedUri, P1_LIMITS.maxAssetUriCharacters)) {
+    throw new P1StoreError("resource_limit", "Asset URI exceeds maxAssetUriCharacters.");
+  }
+
   if (
     !hasExactlyKeys(input.renderable, ["asset", "node", "visible"]) ||
     !hasExactlyKeys(input.renderable.asset, ["uri", "mediaType"]) ||
@@ -401,6 +408,14 @@ function validateMaterialState(value: P1TransformState | P1MaterialState): asser
   ) {
     throw new P1StoreError("invalid_component_state", "Material baseColor is invalid.");
   }
+}
+
+/** True when `text` has more than `limit` Unicode code points (UTF-16 length is a cheap upper bound). */
+function exceedsCodePoints(text: string, limit: number): boolean {
+  if (text.length <= limit) return false;
+  let count = 0;
+  for (const _ of text) if (++count > limit) return true;
+  return false;
 }
 
 function hasExactlyKeys(value: unknown, keys: readonly string[]): boolean {
